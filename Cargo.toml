@@ -3,6 +3,10 @@ name = "pc_tictactoe"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "MIT OR Apache-2.0"
+authors = ["Julian Bolivar"]
+description = "Tic-Tac-Toe training environment for the Deliberative Predictive Coding (DPC) reinforcement learning agent"
+repository = "https://github.com/BolivarTech/PC-TicTacToe"
 
 [dependencies]
 pc-rl-core = "1.2.1"
