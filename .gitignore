@@ -1,0 +1,33 @@
+# Build
+/target
+.claude/tdd-guard/data/
+Cargo.lock
+
+# Claude Files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+
+# Superpowers
+docs/superpowers/
+
+# IDE Files
+.idea/
+*.swp
+*.swo
+
+# Model files
+model.json
+*.json.bak
+
+# Session files
+.remember/
+experiment.txt
+Experiments/
+
+# Ralph-Loop
+/plans
+/scripts
+/planning
+BLOCKED.md
+run-tests.sh
