@@ -1,7 +1,7 @@
 # PC-TicTacToe
 
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?logo=rust)](https://www.rust-lang.org/)
-[![CI](https://github.com/BolivarTech/PC-TicTacToe/actions/workflows/ci.yml/badge.svg)](https://github.com/BolivarTech/PC-TicTacToe/actions)
+[![CI](https://github.com/BolivarTech/PC-TicTacToe/workflows/CI/badge.svg)](https://github.com/BolivarTech/PC-TicTacToe/actions)
 [![pc-rl-core](https://img.shields.io/crates/v/pc-rl-core?label=pc-rl-core&color=blue)](https://crates.io/crates/pc-rl-core)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-green.svg)](LICENSE-MIT)
 
