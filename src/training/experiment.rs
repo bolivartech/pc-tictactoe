@@ -13,6 +13,7 @@ use std::io::Write;
 
 use crate::training::trainer::Trainer;
 use crate::utils::config::AppConfig;
+use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
 
 /// Which hyperparameter to sweep in the experiment.
@@ -92,7 +93,7 @@ pub fn run_single(
     config.agent.actor.local_lambda = lambda;
 
     let agent_config = config.to_agent_config()?;
-    let agent = PcActorCritic::new(agent_config, seed)?;
+    let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, seed)?;
 
     let episodes = config.training.episodes;
     let log_interval = config.training.log_interval;
@@ -164,7 +165,7 @@ pub fn run_single_with_sweep(
     }
 
     let agent_config = config.to_agent_config()?;
-    let agent = PcActorCritic::new(agent_config, seed)?;
+    let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, seed)?;
 
     let episodes = config.training.episodes;
     let log_interval = config.training.log_interval;
@@ -317,7 +318,7 @@ pub fn run_seed_test<W: Write>(
         config.training.seed = seed;
 
         let agent_config = config.to_agent_config()?;
-        let agent = PcActorCritic::new(agent_config, seed)?;
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, seed)?;
 
         let episodes = config.training.episodes;
         let log_interval = config.training.log_interval;

@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 mod tests {
+    use pc_rl_core::CpuLinAlg;
     use pc_rl_core::pc_actor::SelectionMode;
     use pc_rl_core::pc_actor_critic::PcActorCritic;
     use pc_rl_core::serializer::{load_agent, save_agent};
@@ -20,7 +21,7 @@ mod tests {
     fn agent_from_default_config() -> PcActorCritic {
         let config = AppConfig::default();
         let agent_config = config.to_agent_config().unwrap();
-        PcActorCritic::new(agent_config, 42).unwrap()
+        PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap()
     }
 
     #[test]
@@ -88,7 +89,7 @@ mod tests {
         save_agent(&agent, &path_str, 1, None).unwrap();
 
         // Load
-        let (loaded, metadata) = load_agent(&path_str).unwrap();
+        let (loaded, metadata) = load_agent(&path_str, CpuLinAlg::new()).unwrap();
         assert_eq!(metadata.episode, 1);
         assert_eq!(
             loaded.config.actor.input_size,
@@ -150,7 +151,7 @@ mod tests {
 
         // Also verify we can create an agent from this config
         let agent_config = config.to_agent_config().unwrap();
-        let mut agent: PcActorCritic = PcActorCritic::new(agent_config, 42).unwrap();
+        let mut agent: PcActorCritic = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
 
         // Play a game to verify topology works end-to-end
         let mut env = TicTacToe::new();

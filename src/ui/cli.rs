@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
+use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor::SelectionMode;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
 use pc_rl_core::serializer::{load_agent, save_agent};
@@ -189,7 +190,7 @@ pub fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     config.validate()?;
     let agent_config = config.to_agent_config()?;
-    let agent = PcActorCritic::new(agent_config, config.training.seed)?;
+    let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, config.training.seed)?;
 
     if args.continuous {
         if let Some(max_ep) = args.max_episodes {
@@ -232,12 +233,12 @@ pub fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// Returns an error on IO/model failures.
 pub fn run_play(args: PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut agent = if let Some(path) = &args.model {
-        let (agent, _) = load_agent(path)?;
+        let (agent, _) = load_agent(path, CpuLinAlg::new())?;
         agent
     } else {
         let config = AppConfig::default();
         let agent_config = config.to_agent_config()?;
-        PcActorCritic::new(agent_config, 42)?
+        PcActorCritic::new(CpuLinAlg::new(), agent_config, 42)?
     };
 
     let mut env = TicTacToe::new();
@@ -334,12 +335,12 @@ fn print_board(env: &TicTacToe) {
 /// Returns an error on model loading failures.
 pub fn run_evaluate(args: EvaluateArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut agent = if let Some(path) = &args.model {
-        let (agent, _) = load_agent(path)?;
+        let (agent, _) = load_agent(path, CpuLinAlg::new())?;
         agent
     } else {
         let config = AppConfig::default();
         let agent_config = config.to_agent_config()?;
-        PcActorCritic::new(agent_config, 42)?
+        PcActorCritic::new(CpuLinAlg::new(), agent_config, 42)?
     };
 
     let mut minimax = MinimaxPlayer::new(args.depth);
@@ -409,12 +410,12 @@ pub fn run_evaluate(args: EvaluateArgs) -> Result<(), Box<dyn std::error::Error>
 /// Returns an error on config/model failures.
 pub fn run_benchmark(args: BenchmarkArgs) -> Result<(), Box<dyn std::error::Error>> {
     let agent = if let Some(path) = &args.model {
-        let (agent, _) = load_agent(path)?;
+        let (agent, _) = load_agent(path, CpuLinAlg::new())?;
         agent
     } else {
         let config = AppConfig::default();
         let agent_config = config.to_agent_config()?;
-        PcActorCritic::new(agent_config, 42)?
+        PcActorCritic::new(CpuLinAlg::new(), agent_config, 42)?
     };
 
     let config = AppConfig::default();

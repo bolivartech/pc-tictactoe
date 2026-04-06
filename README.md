@@ -74,7 +74,7 @@ cargo run --release -- evaluate --model model.json --games 100 --depth 9
 
 ```bash
 # Run seed-test (multiple seeds, same config)
-cargo run --release -- seed-test -c config.toml --seeds 35
+cargo run --release -- seed-test -c config.toml --n 35
 
 # Run parameter sweep experiment
 cargo run --release -- experiment -c config.toml

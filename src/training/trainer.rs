@@ -30,7 +30,7 @@ use crate::utils::metrics::{GameOutcome, Metrics};
 ///
 /// let config = AppConfig::default();
 /// let agent_config = config.to_agent_config().unwrap();
-/// let agent = PcActorCritic::new(agent_config, 42).unwrap();
+/// let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
 /// let mut trainer = Trainer::new(agent, &config);
 /// trainer.train(10);
 /// ```
@@ -248,12 +248,13 @@ impl Trainer {
 mod tests {
     use super::*;
     use crate::utils::config::AppConfig;
+    use pc_rl_core::CpuLinAlg;
 
     fn make_trainer(num_episodes: usize) -> Trainer {
         let mut config = AppConfig::default();
         config.training.episodes = num_episodes;
         let agent_config = config.to_agent_config().unwrap();
-        let agent = PcActorCritic::new(agent_config, 42).unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
         Trainer::new(agent, &config)
     }
 
@@ -277,7 +278,7 @@ mod tests {
         let agent_config = config.to_agent_config().unwrap();
 
         // Train an agent
-        let trained_agent = PcActorCritic::new(agent_config.clone(), 42).unwrap();
+        let trained_agent = PcActorCritic::new(CpuLinAlg::new(), agent_config.clone(), 42).unwrap();
         let mut trainer = Trainer::new(trained_agent, &config);
         trainer.train(20);
 
@@ -289,7 +290,7 @@ mod tests {
         let trained_path = dir.join("trained.json");
 
         let fresh2: PcActorCritic =
-            PcActorCritic::new(config.to_agent_config().unwrap(), 42).unwrap();
+            PcActorCritic::new(CpuLinAlg::new(), config.to_agent_config().unwrap(), 42).unwrap();
         save_agent(&fresh2, &fresh_path.to_string_lossy(), 0, None).unwrap();
         save_agent(trainer.agent(), &trained_path.to_string_lossy(), 20, None).unwrap();
 
@@ -327,7 +328,7 @@ mod tests {
         config.curriculum.advance_threshold = 0.99; // prevent advancement during test
         config.training.log_interval = 0;
         let agent_config = config.to_agent_config().unwrap();
-        let agent = PcActorCritic::new(agent_config, 42).unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
         let mut trainer = Trainer::new(agent, &config);
 
         trainer.train(500);
@@ -358,7 +359,7 @@ mod tests {
         config.curriculum.advance_threshold = 0.0; // Always advance
         config.curriculum.window_size = 1;
         let agent_config = config.to_agent_config().unwrap();
-        let agent = PcActorCritic::new(agent_config, 42).unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
         let mut trainer = Trainer::new(agent, &config);
 
         // With threshold=0.0 and window=1, any win advances depth

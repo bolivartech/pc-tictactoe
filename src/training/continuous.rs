@@ -36,7 +36,7 @@ use crate::utils::metrics::{GameOutcome, Metrics};
 ///
 /// let config = AppConfig::default();
 /// let agent_config = config.to_agent_config().unwrap();
-/// let agent = PcActorCritic::new(agent_config, 42).unwrap();
+/// let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
 /// let stop = Arc::new(AtomicBool::new(false));
 /// let mut trainer = ContinuousTrainer::new(agent, &config, stop);
 /// trainer.train();
@@ -236,13 +236,14 @@ impl ContinuousTrainer {
 mod tests {
     use super::*;
     use crate::utils::config::AppConfig;
+    use pc_rl_core::CpuLinAlg;
 
     fn make_continuous_trainer(max_episodes: usize) -> ContinuousTrainer {
         let mut config = AppConfig::default();
         config.continuous.max_episodes = max_episodes;
         config.continuous.surprise_threshold = 0.0; // Low threshold to trigger events
         let agent_config = config.to_agent_config().unwrap();
-        let agent = PcActorCritic::new(agent_config, 42).unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         ContinuousTrainer::new(agent, &config, stop)
     }
