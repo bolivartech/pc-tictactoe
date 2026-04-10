@@ -107,11 +107,13 @@ impl ContinuousTrainer {
     pub fn train(&mut self) {
         while !self.stop_flag.load(Ordering::Relaxed) && self.episode_count < self.max_episodes {
             self.run_episode();
-            self.episode_count += 1;
 
-            // Record outcome
+            // Record outcome (before incrementing episode_count, since
+            // run_episode used the current count to determine agent_side)
             let outcome = self.episode_outcome();
             self.metrics.record(outcome);
+
+            self.episode_count += 1;
 
             // Check curriculum advancement (only after window is full)
             let prev_depth = self.current_depth;
