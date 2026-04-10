@@ -1,29 +1,33 @@
 // Author: Julian Bolivar
-// Version: 1.0.0
-// Date: 2026-03-25
+// Version: 2.0.0
+// Date: 2026-04-10
 
-//! Continuous training loop with surprise-based immediate updates.
+//! Continuous training loop using the unified `step_masked()` API.
 //!
-//! Implements [`ContinuousTrainer`] which runs until a stop flag is set,
-//! a maximum episode count is reached, or a target win rate is hit.
-//! Per-step surprise checks trigger immediate TD(0) updates when the
-//! surprise score exceeds a configured threshold.
+//! Implements [`ContinuousTrainer`] which runs until a stop flag is set
+//! or a maximum episode count is reached. Each agent step uses
+//! [`PcActorCritic::step_masked()`] for combined inference and TD(0)
+//! learning — surprise-driven plasticity is handled internally by the
+//! core library. Includes curriculum learning with depth advancement.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use pc_rl_core::pc_actor::SelectionMode;
-use pc_rl_core::pc_actor_critic::{PcActorCritic, TrajectoryStep};
+use pc_rl_core::pc_actor_critic::PcActorCritic;
 
 use crate::env::minimax::MinimaxPlayer;
 use crate::env::tictactoe::{GameResult, Player, TicTacToe};
 use crate::utils::metrics::{GameOutcome, Metrics};
 
-/// Continuous trainer with surprise-based immediate TD(0) updates.
+/// Continuous trainer using the unified `step_masked()` API with curriculum learning.
 ///
-/// Runs episodes until stopped via `stop_flag`, `max_episodes`,
-/// or target win rate. High-surprise steps trigger immediate
-/// `learn_continuous` calls mid-episode.
+/// Runs episodes until stopped via `stop_flag` or `max_episodes`.
+/// Each agent step calls [`PcActorCritic::step_masked()`] which performs
+/// inference, action selection, and TD(0) learning in a single call.
+/// Surprise-based plasticity scaling is handled internally by the core library.
+///
+/// Curriculum learning advances the minimax opponent depth when the
+/// agent's non-loss rate exceeds `advance_threshold` over a sliding window.
 ///
 /// # Examples
 ///
@@ -31,6 +35,7 @@ use crate::utils::metrics::{GameOutcome, Metrics};
 /// use std::sync::Arc;
 /// use std::sync::atomic::AtomicBool;
 /// use pc_rl_core::pc_actor_critic::PcActorCritic;
+/// use pc_rl_core::CpuLinAlg;
 /// use pc_tictactoe::training::continuous::ContinuousTrainer;
 /// use pc_tictactoe::utils::config::AppConfig;
 ///
@@ -54,14 +59,14 @@ pub struct ContinuousTrainer {
     stop_flag: Arc<AtomicBool>,
     /// Maximum episodes before automatic stop.
     max_episodes: usize,
-    /// Surprise threshold for immediate TD(0) updates.
-    surprise_threshold: f64,
     /// Total episodes trained.
     episode_count: usize,
-    /// Number of surprise-triggered immediate updates.
-    surprise_events: usize,
-    /// Number of steps where surprise was below threshold (absorbed).
-    absorbed_events: usize,
+    /// Total agent steps across all episodes.
+    step_count: usize,
+    /// Current minimax search depth (curriculum level).
+    current_depth: usize,
+    /// Non-loss rate threshold to advance curriculum depth.
+    advance_threshold: f64,
     /// How often to print progress (every N episodes). 0 = silent.
     log_interval: usize,
 }
@@ -86,129 +91,122 @@ impl ContinuousTrainer {
             metrics: Metrics::new(config.curriculum.window_size),
             stop_flag,
             max_episodes: config.continuous.max_episodes,
-            surprise_threshold: config.continuous.surprise_threshold,
             episode_count: 0,
-            surprise_events: 0,
-            absorbed_events: 0,
+            step_count: 0,
+            current_depth: 1,
+            advance_threshold: config.curriculum.advance_threshold,
             log_interval: config.training.log_interval,
         }
     }
 
     /// Runs the continuous training loop.
     ///
-    /// Continues until `stop_flag` is set, `max_episodes` is reached,
-    /// or all episodes complete. Each episode collects a trajectory,
-    /// checks per-step surprise for immediate updates, then learns
-    /// from the full trajectory.
+    /// Continues until `stop_flag` is set or `max_episodes` is reached.
+    /// Each episode uses `step_masked()` for unified inference and learning,
+    /// then checks curriculum advancement.
     pub fn train(&mut self) {
         while !self.stop_flag.load(Ordering::Relaxed) && self.episode_count < self.max_episodes {
             self.run_episode();
             self.episode_count += 1;
 
+            // Record outcome
+            let outcome = self.episode_outcome();
+            self.metrics.record(outcome);
+
+            // Check curriculum advancement (only after window is full)
+            let prev_depth = self.current_depth;
+            let non_loss_rate = self.metrics.win_rate() + self.metrics.draw_rate();
+            if self.metrics.count() >= self.metrics.window_size()
+                && non_loss_rate > self.advance_threshold
+                && self.current_depth < 9
+            {
+                self.current_depth += 1;
+                self.minimax = MinimaxPlayer::new(self.current_depth);
+                self.metrics.reset();
+            }
+
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
                 eprintln!(
-                    "[ep {ep:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | surprise_events={se} absorbed={ab}",
+                    "[ep {ep:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | depth={depth} steps={steps}",
                     ep = self.episode_count,
                     total = self.max_episodes,
                     win = self.metrics.win_rate() * 100.0,
                     loss = self.metrics.loss_rate() * 100.0,
                     draw = self.metrics.draw_rate() * 100.0,
-                    se = self.surprise_events,
-                    ab = self.absorbed_events,
+                    depth = self.current_depth,
+                    steps = self.step_count,
+                );
+            }
+            if prev_depth != self.current_depth {
+                eprintln!(
+                    "  >> Curriculum advanced: depth {} -> {}",
+                    prev_depth, self.current_depth
                 );
             }
         }
     }
 
-    /// Runs a single episode with surprise-based immediate updates.
+    /// Runs a single episode using `step_masked()` for unified inference and TD(0) learning.
+    ///
+    /// The agent alternates sides each episode. On each agent turn,
+    /// `step_masked()` learns from the previous transition and selects
+    /// the next action. A final terminal call with the game reward
+    /// completes the episode.
     fn run_episode(&mut self) {
         self.env.reset();
+        self.agent.reset_step();
+
         let agent_side = if self.episode_count.is_multiple_of(2) {
             Player::One
         } else {
             Player::Two
         };
 
-        let mut trajectory = Vec::new();
+        // If agent is Player Two, let opponent move first
+        if agent_side == Player::Two && !self.env.is_terminal() {
+            let opp_action = self.minimax.choose_action(&self.env);
+            self.env.step(opp_action).unwrap();
+        }
 
         while !self.env.is_terminal() {
-            if self.env.current_player() == agent_side {
-                let state = self.env.board_as_f64(agent_side);
-                let valid = self.env.valid_actions();
-                let (action, infer) = self.agent.act(&state, &valid, SelectionMode::Training);
+            // Agent's turn
+            let state = self.env.board_as_f64(agent_side);
+            let valid = self.env.valid_actions();
+            let action = self.agent.step_masked(&state, &valid, 0.0, false).unwrap();
+            self.step_count += 1;
+            self.env.step(action).unwrap();
 
-                let surprise = infer.surprise_score;
-
-                trajectory.push(TrajectoryStep {
-                    input: state.to_vec(),
-                    latent_concat: infer.latent_concat.clone(),
-                    y_conv: infer.y_conv.clone(),
-                    hidden_states: infer.hidden_states.clone(),
-                    prediction_errors: infer.prediction_errors.clone(),
-                    tanh_components: infer.tanh_components.clone(),
-                    action,
-                    valid_actions: valid.clone(),
-                    reward: 0.0,
-                    surprise_score: surprise,
-                    steps_used: infer.steps_used,
-                });
-
-                self.env.step(action).unwrap();
-
-                // Per-step surprise check for immediate TD(0) update
-                if surprise > self.surprise_threshold && !self.env.is_terminal() {
-                    // Let opponent respond before evaluating next state
-                    // so V(s') is the agent's actual next decision point
-                    if self.env.current_player() != agent_side && !self.env.is_terminal() {
-                        let opp_action = self.minimax.choose_action(&self.env);
-                        self.env.step(opp_action).unwrap();
-                    }
-
-                    let terminal = self.env.is_terminal();
-                    let next_state = self.env.board_as_f64(agent_side);
-                    // Use infer() directly to avoid perturbing the RNG
-                    let next_infer = self.agent.infer(&next_state);
-
-                    self.agent.learn_continuous(
-                        &state,
-                        &infer,
-                        action,
-                        &valid,
-                        if terminal {
-                            self.env.reward(agent_side)
-                        } else {
-                            0.0
-                        },
-                        &next_state,
-                        &next_infer,
-                        terminal,
-                    );
-                    self.surprise_events += 1;
-                } else {
-                    self.absorbed_events += 1;
-                }
-            } else {
-                let minimax_action = self.minimax.choose_action(&self.env);
-                self.env.step(minimax_action).unwrap();
+            // Opponent's turn (if game not over)
+            if !self.env.is_terminal() && self.env.current_player() != agent_side {
+                let opp_action = self.minimax.choose_action(&self.env);
+                self.env.step(opp_action).unwrap();
             }
         }
 
-        // Assign terminal reward to last step
-        if let Some(last) = trajectory.last_mut() {
-            last.reward = self.env.reward(agent_side);
-        }
+        // Terminal step: send final reward with terminal=true
+        let terminal_reward = self.env.reward(agent_side);
+        let final_state = self.env.board_as_f64(agent_side);
+        let final_valid: Vec<usize> = (0..9).collect();
+        let _ = self
+            .agent
+            .step_masked(&final_state, &final_valid, terminal_reward, true)
+            .unwrap();
+        self.step_count += 1;
+    }
 
-        // Learn from full trajectory
-        self.agent.learn(&trajectory);
-
-        // Record outcome
-        let outcome = match self.env.result() {
+    /// Determines the game outcome from the agent's perspective.
+    fn episode_outcome(&self) -> GameOutcome {
+        let agent_side = if self.episode_count.is_multiple_of(2) {
+            Player::One
+        } else {
+            Player::Two
+        };
+        match self.env.result() {
             GameResult::Win(p) if p == agent_side => GameOutcome::Win,
             GameResult::Win(_) => GameOutcome::Loss,
             GameResult::Draw => GameOutcome::Draw,
             GameResult::InProgress => GameOutcome::Draw,
-        };
-        self.metrics.record(outcome);
+        }
     }
 
     /// Returns the total number of episodes trained.
@@ -216,14 +214,19 @@ impl ContinuousTrainer {
         self.episode_count
     }
 
-    /// Returns the number of surprise-triggered immediate updates.
-    pub fn surprise_events(&self) -> usize {
-        self.surprise_events
+    /// Returns the total number of agent steps across all episodes.
+    pub fn step_count(&self) -> usize {
+        self.step_count
     }
 
-    /// Returns the number of absorbed (below threshold) events.
-    pub fn absorbed_events(&self) -> usize {
-        self.absorbed_events
+    /// Returns the current curriculum depth.
+    pub fn current_depth(&self) -> usize {
+        self.current_depth
+    }
+
+    /// Returns a reference to the metrics tracker.
+    pub fn metrics(&self) -> &Metrics {
+        &self.metrics
     }
 
     /// Returns a reference to the agent.
@@ -241,7 +244,18 @@ mod tests {
     fn make_continuous_trainer(max_episodes: usize) -> ContinuousTrainer {
         let mut config = AppConfig::default();
         config.continuous.max_episodes = max_episodes;
-        config.continuous.surprise_threshold = 0.0; // Low threshold to trigger events
+        let agent_config = config.to_agent_config().unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        ContinuousTrainer::new(agent, &config, stop)
+    }
+
+    fn make_cl_trainer_with_hysteresis(max_episodes: usize) -> ContinuousTrainer {
+        let mut config = AppConfig::default();
+        config.continuous.max_episodes = max_episodes;
+        config.agent.actor_hysteresis = true;
+        config.agent.critic_hysteresis = true;
+        config.agent.scale_floor = 0.0;
         let agent_config = config.to_agent_config().unwrap();
         let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
@@ -256,31 +270,50 @@ mod tests {
     }
 
     #[test]
-    fn test_high_surprise_triggers_immediate_update() {
-        // With surprise_threshold=0.0, nearly all steps should trigger
-        let mut trainer = make_continuous_trainer(5);
-        trainer.train();
-        assert!(
-            trainer.surprise_events() > 0,
-            "Expected at least one surprise event, got 0"
-        );
-    }
-
-    #[test]
-    fn test_absorbed_events_lte_surprise_events() {
-        // With threshold=0.0, surprise_events should dominate
-        // But absorbed can occur for terminal steps or zero surprise
-        let mut trainer = make_continuous_trainer(5);
-        trainer.train();
-        // Just verify both counters are populated
-        let total = trainer.surprise_events() + trainer.absorbed_events();
-        assert!(total > 0, "Expected some events to be recorded");
-    }
-
-    #[test]
     fn test_max_episodes_stops_training() {
         let mut trainer = make_continuous_trainer(3);
         trainer.train();
         assert_eq!(trainer.episode_count(), 3);
+    }
+
+    #[test]
+    fn test_step_count_positive_after_training() {
+        let mut trainer = make_continuous_trainer(5);
+        trainer.train();
+        assert!(
+            trainer.step_count() > 0,
+            "Expected positive step count after training"
+        );
+    }
+
+    #[test]
+    fn test_curriculum_advances_with_low_threshold() {
+        let mut config = AppConfig::default();
+        config.continuous.max_episodes = 2000;
+        config.curriculum.advance_threshold = 0.0;
+        config.curriculum.window_size = 1;
+        let agent_config = config.to_agent_config().unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut trainer = ContinuousTrainer::new(agent, &config, stop);
+        trainer.train();
+        assert!(
+            trainer.current_depth() > 1,
+            "Curriculum should advance with threshold=0.0"
+        );
+    }
+
+    #[test]
+    fn test_hysteresis_enabled_completes_without_panic() {
+        let mut trainer = make_cl_trainer_with_hysteresis(10);
+        trainer.train();
+        assert_eq!(trainer.episode_count(), 10);
+    }
+
+    #[test]
+    fn test_agent_alternates_sides() {
+        let mut trainer = make_continuous_trainer(4);
+        trainer.train();
+        assert_eq!(trainer.episode_count(), 4);
     }
 }
