@@ -79,6 +79,79 @@ pub struct AgentSection {
     /// Entropy regularization coefficient.
     #[serde(default = "default_entropy_coeff")]
     pub entropy_coeff: f64,
+    // ─── Continuous Learning (M1–M4) ───────────────────────────────────────
+    /// Learning rate floor when surprise is low. 0.0 = true weight freeze.
+    #[serde(default = "default_scale_floor")]
+    pub scale_floor: f64,
+    /// Learning rate ceiling when surprise is high.
+    #[serde(default = "default_scale_ceil")]
+    pub scale_ceil: f64,
+    /// Enable actor FROZEN/PLASTIC hysteresis state machine.
+    #[serde(default)]
+    pub actor_hysteresis: bool,
+    /// Fast EWMA window for actor hysteresis.
+    #[serde(default = "default_fast_window")]
+    pub actor_fast_window: usize,
+    /// Slow EWMA window for actor hysteresis.
+    #[serde(default = "default_slow_window")]
+    pub actor_slow_window: usize,
+    /// Fraction above slow EWMA to wake actor (FROZEN -> PLASTIC).
+    #[serde(default = "default_wake_fraction")]
+    pub actor_wake_fraction: f64,
+    /// Fraction below slow EWMA to sleep actor (PLASTIC -> FROZEN).
+    #[serde(default = "default_sleep_fraction")]
+    pub actor_sleep_fraction: f64,
+    /// Enable critic FROZEN/PLASTIC hysteresis state machine.
+    #[serde(default)]
+    pub critic_hysteresis: bool,
+    /// Fast EWMA window for critic hysteresis.
+    #[serde(default = "default_fast_window")]
+    pub critic_fast_window: usize,
+    /// Slow EWMA window for critic hysteresis.
+    #[serde(default = "default_slow_window")]
+    pub critic_slow_window: usize,
+    /// Fraction above slow EWMA to wake critic.
+    #[serde(default = "default_wake_fraction")]
+    pub critic_wake_fraction: f64,
+    /// Fraction below slow EWMA to sleep critic.
+    #[serde(default = "default_sleep_fraction")]
+    pub critic_sleep_fraction: f64,
+    /// When actor wakes, force critic to wake if frozen long enough.
+    #[serde(default)]
+    pub actor_wakes_critic: bool,
+    /// Minimum critic frozen steps before actor-wakes-critic coupling triggers.
+    #[serde(default = "default_actor_wakes_critic_threshold")]
+    pub actor_wakes_critic_threshold: u64,
+    /// Actor consolidation decay base. Layer i gets decay^(n_hidden-1-i).
+    #[serde(default = "default_consolidation_decay")]
+    pub consolidation_decay: f64,
+    /// Critic consolidation decay base.
+    #[serde(default = "default_consolidation_decay")]
+    pub critic_consolidation_decay: f64,
+    /// Enable adaptive sigmoid-driven consolidation decay for actor.
+    #[serde(default)]
+    pub adaptive_consolidation: bool,
+    /// EMA smoothing for per-layer prediction error (M3b).
+    #[serde(default = "default_consolidation_ema_beta")]
+    pub consolidation_ema_beta: f64,
+    /// Sigmoid steepness for adaptive consolidation.
+    #[serde(default = "default_consolidation_sigmoid_k")]
+    pub consolidation_sigmoid_k: f64,
+    /// Sigmoid midpoint for adaptive consolidation.
+    #[serde(default = "default_consolidation_error_threshold")]
+    pub consolidation_error_threshold: f64,
+    /// EWC regularization strength. 0.0 = disabled.
+    #[serde(default)]
+    pub ewc_lambda: f64,
+    /// Fisher decay on FROZEN -> PLASTIC transitions.
+    #[serde(default = "default_fisher_decay")]
+    pub fisher_decay: f64,
+    /// Fisher EMA smoothing.
+    #[serde(default = "default_fisher_ema_beta")]
+    pub fisher_ema_beta: f64,
+    /// Use reversed logits for actor Fisher estimation.
+    #[serde(default)]
+    pub logits_reversal: bool,
 }
 
 /// Actor network configuration section.
@@ -330,6 +403,45 @@ fn default_activation_tanh() -> String {
 fn default_activation_linear() -> String {
     "linear".to_string()
 }
+fn default_scale_floor() -> f64 {
+    0.0
+}
+fn default_scale_ceil() -> f64 {
+    2.0
+}
+fn default_fast_window() -> usize {
+    20
+}
+fn default_slow_window() -> usize {
+    100
+}
+fn default_wake_fraction() -> f64 {
+    0.5
+}
+fn default_sleep_fraction() -> f64 {
+    0.3
+}
+fn default_actor_wakes_critic_threshold() -> u64 {
+    1000
+}
+fn default_consolidation_decay() -> f64 {
+    1.0
+}
+fn default_consolidation_ema_beta() -> f64 {
+    0.99
+}
+fn default_consolidation_sigmoid_k() -> f64 {
+    10.0
+}
+fn default_consolidation_error_threshold() -> f64 {
+    0.05
+}
+fn default_fisher_decay() -> f64 {
+    0.9
+}
+fn default_fisher_ema_beta() -> f64 {
+    0.99
+}
 
 fn default_actor_hidden() -> Vec<HiddenLayerDef> {
     vec![HiddenLayerDef {
@@ -358,6 +470,30 @@ impl Default for AgentSection {
             adaptive_surprise: default_adaptive_surprise(),
             surprise_buffer_size: default_surprise_buffer_size(),
             entropy_coeff: default_entropy_coeff(),
+            scale_floor: default_scale_floor(),
+            scale_ceil: default_scale_ceil(),
+            actor_hysteresis: false,
+            actor_fast_window: default_fast_window(),
+            actor_slow_window: default_slow_window(),
+            actor_wake_fraction: default_wake_fraction(),
+            actor_sleep_fraction: default_sleep_fraction(),
+            critic_hysteresis: false,
+            critic_fast_window: default_fast_window(),
+            critic_slow_window: default_slow_window(),
+            critic_wake_fraction: default_wake_fraction(),
+            critic_sleep_fraction: default_sleep_fraction(),
+            actor_wakes_critic: false,
+            actor_wakes_critic_threshold: default_actor_wakes_critic_threshold(),
+            consolidation_decay: default_consolidation_decay(),
+            critic_consolidation_decay: default_consolidation_decay(),
+            adaptive_consolidation: false,
+            consolidation_ema_beta: default_consolidation_ema_beta(),
+            consolidation_sigmoid_k: default_consolidation_sigmoid_k(),
+            consolidation_error_threshold: default_consolidation_error_threshold(),
+            ewc_lambda: 0.0,
+            fisher_decay: default_fisher_decay(),
+            fisher_ema_beta: default_fisher_ema_beta(),
+            logits_reversal: false,
         }
     }
 }
@@ -566,6 +702,30 @@ impl AppConfig {
             adaptive_surprise: self.agent.adaptive_surprise,
             surprise_buffer_size: self.agent.surprise_buffer_size,
             entropy_coeff: self.agent.entropy_coeff,
+            scale_floor: self.agent.scale_floor,
+            scale_ceil: self.agent.scale_ceil,
+            actor_hysteresis: self.agent.actor_hysteresis,
+            actor_fast_window: self.agent.actor_fast_window,
+            actor_slow_window: self.agent.actor_slow_window,
+            actor_wake_fraction: self.agent.actor_wake_fraction,
+            actor_sleep_fraction: self.agent.actor_sleep_fraction,
+            critic_hysteresis: self.agent.critic_hysteresis,
+            critic_fast_window: self.agent.critic_fast_window,
+            critic_slow_window: self.agent.critic_slow_window,
+            critic_wake_fraction: self.agent.critic_wake_fraction,
+            critic_sleep_fraction: self.agent.critic_sleep_fraction,
+            actor_wakes_critic: self.agent.actor_wakes_critic,
+            actor_wakes_critic_threshold: self.agent.actor_wakes_critic_threshold,
+            consolidation_decay: self.agent.consolidation_decay,
+            critic_consolidation_decay: self.agent.critic_consolidation_decay,
+            adaptive_consolidation: self.agent.adaptive_consolidation,
+            consolidation_ema_beta: self.agent.consolidation_ema_beta,
+            consolidation_sigmoid_k: self.agent.consolidation_sigmoid_k,
+            consolidation_error_threshold: self.agent.consolidation_error_threshold,
+            ewc_lambda: self.agent.ewc_lambda,
+            fisher_decay: self.agent.fisher_decay,
+            fisher_ema_beta: self.agent.fisher_ema_beta,
+            logits_reversal: self.agent.logits_reversal,
         })
     }
 
@@ -726,5 +886,107 @@ episodes = 5000
         let ac = config.to_agent_config().unwrap();
         assert!(ac.actor.residual);
         assert!((ac.actor.rezero_init - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_cl_fields_parse_from_toml() {
+        let toml_str = r#"
+[agent]
+gamma = 0.99
+scale_floor = 0.0
+scale_ceil = 2.0
+actor_hysteresis = true
+actor_fast_window = 20
+actor_slow_window = 100
+actor_wake_fraction = 0.5
+actor_sleep_fraction = 0.3
+critic_hysteresis = false
+actor_wakes_critic = true
+actor_wakes_critic_threshold = 500
+consolidation_decay = 0.95
+critic_consolidation_decay = 0.9
+adaptive_consolidation = true
+consolidation_ema_beta = 0.99
+consolidation_sigmoid_k = 10.0
+consolidation_error_threshold = 0.05
+ewc_lambda = 0.1
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
+logits_reversal = false
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "tanh"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "tanh"
+
+[agent.critic]
+input_size = 27
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "tanh"
+
+[training]
+episodes = 5000
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!((config.agent.scale_floor - 0.0).abs() < 1e-12);
+        assert!((config.agent.scale_ceil - 2.0).abs() < 1e-12);
+        assert!(config.agent.actor_hysteresis);
+        assert_eq!(config.agent.actor_fast_window, 20);
+        assert_eq!(config.agent.actor_slow_window, 100);
+        assert!((config.agent.actor_wake_fraction - 0.5).abs() < 1e-12);
+        assert!((config.agent.actor_sleep_fraction - 0.3).abs() < 1e-12);
+        assert!(!config.agent.critic_hysteresis);
+        assert!(config.agent.actor_wakes_critic);
+        assert_eq!(config.agent.actor_wakes_critic_threshold, 500);
+        assert!((config.agent.consolidation_decay - 0.95).abs() < 1e-12);
+        assert!((config.agent.critic_consolidation_decay - 0.9).abs() < 1e-12);
+        assert!(config.agent.adaptive_consolidation);
+        assert!((config.agent.consolidation_ema_beta - 0.99).abs() < 1e-12);
+        assert!((config.agent.consolidation_sigmoid_k - 10.0).abs() < 1e-12);
+        assert!((config.agent.consolidation_error_threshold - 0.05).abs() < 1e-12);
+        assert!((config.agent.ewc_lambda - 0.1).abs() < 1e-12);
+        assert!((config.agent.fisher_decay - 0.9).abs() < 1e-12);
+        assert!((config.agent.fisher_ema_beta - 0.99).abs() < 1e-12);
+        assert!(!config.agent.logits_reversal);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_cl_fields_default_to_disabled() {
+        let config = AppConfig::default();
+        assert!((config.agent.scale_floor - 0.0).abs() < 1e-12);
+        assert!((config.agent.scale_ceil - 2.0).abs() < 1e-12);
+        assert!(!config.agent.actor_hysteresis);
+        assert!(!config.agent.critic_hysteresis);
+        assert!(!config.agent.actor_wakes_critic);
+        assert!((config.agent.consolidation_decay - 1.0).abs() < 1e-12);
+        assert!((config.agent.critic_consolidation_decay - 1.0).abs() < 1e-12);
+        assert!(!config.agent.adaptive_consolidation);
+        assert!((config.agent.ewc_lambda - 0.0).abs() < 1e-12);
+        assert!(!config.agent.logits_reversal);
+    }
+
+    #[test]
+    fn test_to_agent_config_passes_cl_fields() {
+        let mut config = AppConfig::default();
+        config.agent.scale_floor = 0.1;
+        config.agent.scale_ceil = 3.0;
+        config.agent.actor_hysteresis = true;
+        config.agent.actor_fast_window = 30;
+        config.agent.ewc_lambda = 0.5;
+        config.agent.consolidation_decay = 0.8;
+        let ac = config.to_agent_config().unwrap();
+        assert!((ac.scale_floor - 0.1).abs() < 1e-12);
+        assert!((ac.scale_ceil - 3.0).abs() < 1e-12);
+        assert!(ac.actor_hysteresis);
+        assert_eq!(ac.actor_fast_window, 30);
+        assert!((ac.ewc_lambda - 0.5).abs() < 1e-12);
+        assert!((ac.consolidation_decay - 0.8).abs() < 1e-12);
     }
 }
