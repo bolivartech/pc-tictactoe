@@ -1,4 +1,4 @@
-# Continuous Learning experiment config — all CL features enabled
+# Continuous Learning experiment config — 3-layer network, all CL features enabled
 # Use with: cargo run --release -- seed-test -c config_cl_experiment.toml -n 35 --continuous
 
 [agent]
@@ -9,37 +9,15 @@ adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
 
-# M1 — Surprise-driven scale range
-scale_floor = 0.0              # True weight freeze when surprise is low
-scale_ceil = 2.0               # 2x learning rate when surprise is high
-
-# M2 — Hysteresis: dual-EWMA FROZEN/PLASTIC state machines
-actor_hysteresis = true
-actor_fast_window = 20
-actor_slow_window = 100
-actor_wake_fraction = 0.5
-actor_sleep_fraction = 0.3
-critic_hysteresis = true
-critic_fast_window = 20
-critic_slow_window = 100
-critic_wake_fraction = 0.5
-critic_sleep_fraction = 0.3
-actor_wakes_critic = true
-actor_wakes_critic_threshold = 1000
-
-# M3 — Consolidation decay: per-layer learning rate modulation
-consolidation_decay = 0.95     # Shallow layers consolidate faster
-critic_consolidation_decay = 0.95
-adaptive_consolidation = true  # Sigmoid-driven per-layer decay
-consolidation_ema_beta = 0.99
-consolidation_sigmoid_k = 10.0
-consolidation_error_threshold = 0.05
-
-# M4 — EWC: Elastic Weight Consolidation
-ewc_lambda = 0.1              # Moderate knowledge protection
-fisher_decay = 0.9
-fisher_ema_beta = 0.99
-logits_reversal = false
+# CL disabled — TD(0) baseline experiment
+scale_floor = 0.0
+scale_ceil = 2.0
+actor_hysteresis = false
+critic_hysteresis = false
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+ewc_lambda = 0.0
 
 [agent.actor]
 input_size = 9
@@ -52,27 +30,34 @@ max_steps = 5
 lr_weights = 0.005
 synchronous = true
 temperature = 1.0
-local_lambda = 0.99
-residual = false
-rezero_init = 0.001
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
 
 [[agent.actor.hidden_layers]]
 size = 27
-activation = "tanh"
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
 
 [agent.critic]
-# input_size = actor.input_size + sum(hidden layer sizes)
-# 9 + 27 = 36
-input_size = 36
+# 9 + 27 + 27 + 18 = 81
+input_size = 81
 output_activation = "linear"
 lr = 0.005
 
 [[agent.critic.hidden_layers]]
 size = 36
-activation = "tanh"
+activation = "softsign"
 
 [training]
-episodes = 50000
+episodes = 200000
 checkpoint_interval = 5000
 log_interval = 500
 seed = 42
@@ -82,7 +67,7 @@ advance_threshold = 0.95
 window_size = 1000
 
 [continuous]
-max_episodes = 50000
+max_episodes = 200000
 
 [logger]
 level = "info"
