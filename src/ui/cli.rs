@@ -371,6 +371,9 @@ pub fn run_evaluate(args: EvaluateArgs) -> Result<(), Box<dyn std::error::Error>
         PcActorCritic::new(CpuLinAlg::new(), agent_config, 42)?
     };
 
+    if args.games == 0 {
+        return Err("--games must be > 0".into());
+    }
     let mut minimax = MinimaxPlayer::new(args.depth);
     let mut wins = 0usize;
     let mut draws = 0usize;

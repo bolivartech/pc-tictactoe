@@ -648,6 +648,129 @@ impl AppConfig {
                 ),
             });
         }
+        self.validate_cl()?;
+        Ok(())
+    }
+
+    /// Validates continuous learning field combinations.
+    ///
+    /// Checks that CL fields form valid combinations: scale range is
+    /// non-inverted, hysteresis windows are ordered, decay factors are
+    /// in bounds, and EWC parameters are non-negative.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConfigError`] describing the invalid combination.
+    fn validate_cl(&self) -> Result<(), ConfigError> {
+        let a = &self.agent;
+
+        // M1: scale range
+        if a.scale_floor > a.scale_ceil {
+            return Err(ConfigError {
+                message: format!(
+                    "scale_floor ({}) > scale_ceil ({})",
+                    a.scale_floor, a.scale_ceil
+                ),
+            });
+        }
+        if a.scale_floor < 0.0 {
+            return Err(ConfigError {
+                message: format!("scale_floor ({}) must be >= 0.0", a.scale_floor),
+            });
+        }
+
+        // M2: hysteresis windows and fractions
+        if a.actor_hysteresis {
+            if a.actor_fast_window >= a.actor_slow_window {
+                return Err(ConfigError {
+                    message: format!(
+                        "actor_fast_window ({}) must be < actor_slow_window ({})",
+                        a.actor_fast_window, a.actor_slow_window
+                    ),
+                });
+            }
+            if a.actor_wake_fraction <= 0.0 {
+                return Err(ConfigError {
+                    message: format!(
+                        "actor_wake_fraction ({}) must be > 0.0",
+                        a.actor_wake_fraction
+                    ),
+                });
+            }
+            if a.actor_sleep_fraction <= 0.0 || a.actor_sleep_fraction >= 1.0 {
+                return Err(ConfigError {
+                    message: format!(
+                        "actor_sleep_fraction ({}) must be in (0.0, 1.0)",
+                        a.actor_sleep_fraction
+                    ),
+                });
+            }
+        }
+        if a.critic_hysteresis {
+            if a.critic_fast_window >= a.critic_slow_window {
+                return Err(ConfigError {
+                    message: format!(
+                        "critic_fast_window ({}) must be < critic_slow_window ({})",
+                        a.critic_fast_window, a.critic_slow_window
+                    ),
+                });
+            }
+            if a.critic_wake_fraction <= 0.0 {
+                return Err(ConfigError {
+                    message: format!(
+                        "critic_wake_fraction ({}) must be > 0.0",
+                        a.critic_wake_fraction
+                    ),
+                });
+            }
+            if a.critic_sleep_fraction <= 0.0 || a.critic_sleep_fraction >= 1.0 {
+                return Err(ConfigError {
+                    message: format!(
+                        "critic_sleep_fraction ({}) must be in (0.0, 1.0)",
+                        a.critic_sleep_fraction
+                    ),
+                });
+            }
+        }
+
+        // M3: consolidation decay
+        if a.consolidation_decay <= 0.0 || a.consolidation_decay > 1.0 {
+            return Err(ConfigError {
+                message: format!(
+                    "consolidation_decay ({}) must be in (0.0, 1.0]",
+                    a.consolidation_decay
+                ),
+            });
+        }
+        if a.critic_consolidation_decay <= 0.0 || a.critic_consolidation_decay > 1.0 {
+            return Err(ConfigError {
+                message: format!(
+                    "critic_consolidation_decay ({}) must be in (0.0, 1.0]",
+                    a.critic_consolidation_decay
+                ),
+            });
+        }
+
+        // M4: EWC
+        if a.ewc_lambda < 0.0 {
+            return Err(ConfigError {
+                message: format!("ewc_lambda ({}) must be >= 0.0", a.ewc_lambda),
+            });
+        }
+        if a.fisher_decay < 0.0 || a.fisher_decay > 1.0 {
+            return Err(ConfigError {
+                message: format!("fisher_decay ({}) must be in [0.0, 1.0]", a.fisher_decay),
+            });
+        }
+        if a.fisher_ema_beta <= 0.0 || a.fisher_ema_beta >= 1.0 {
+            return Err(ConfigError {
+                message: format!(
+                    "fisher_ema_beta ({}) must be in (0.0, 1.0)",
+                    a.fisher_ema_beta
+                ),
+            });
+        }
+
         Ok(())
     }
 
@@ -981,5 +1104,86 @@ episodes = 5000
         assert_eq!(ac.actor_fast_window, 30);
         assert!((ac.ewc_lambda - 0.5).abs() < 1e-12);
         assert!((ac.consolidation_decay - 0.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_cl_validation_scale_floor_gt_ceil_fails() {
+        let mut config = AppConfig::default();
+        config.agent.scale_floor = 3.0;
+        config.agent.scale_ceil = 2.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_negative_scale_floor_fails() {
+        let mut config = AppConfig::default();
+        config.agent.scale_floor = -0.1;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_fast_window_gte_slow_fails() {
+        let mut config = AppConfig::default();
+        config.agent.actor_hysteresis = true;
+        config.agent.actor_fast_window = 100;
+        config.agent.actor_slow_window = 50;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_zero_wake_fraction_fails() {
+        let mut config = AppConfig::default();
+        config.agent.actor_hysteresis = true;
+        config.agent.actor_wake_fraction = 0.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_consolidation_decay_out_of_range_fails() {
+        let mut config = AppConfig::default();
+        config.agent.consolidation_decay = 1.5;
+        assert!(config.validate().is_err());
+
+        config.agent.consolidation_decay = 0.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_negative_ewc_lambda_fails() {
+        let mut config = AppConfig::default();
+        config.agent.ewc_lambda = -0.01;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_fisher_ema_beta_out_of_range_fails() {
+        let mut config = AppConfig::default();
+        config.agent.fisher_ema_beta = 1.0;
+        assert!(config.validate().is_err());
+
+        config.agent.fisher_ema_beta = 0.0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_cl_validation_valid_cl_config_passes() {
+        let mut config = AppConfig::default();
+        config.agent.actor_hysteresis = true;
+        config.agent.critic_hysteresis = true;
+        config.agent.scale_floor = 0.0;
+        config.agent.scale_ceil = 2.0;
+        config.agent.consolidation_decay = 0.95;
+        config.agent.ewc_lambda = 0.1;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_cl_validation_disabled_hysteresis_skips_window_check() {
+        let mut config = AppConfig::default();
+        // Invalid windows, but hysteresis is disabled so should pass
+        config.agent.actor_hysteresis = false;
+        config.agent.actor_fast_window = 200;
+        config.agent.actor_slow_window = 10;
+        assert!(config.validate().is_ok());
     }
 }

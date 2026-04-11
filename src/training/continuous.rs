@@ -108,7 +108,7 @@ impl ContinuousTrainer {
     /// Each episode uses `step_masked()` for unified inference and learning,
     /// then checks curriculum advancement.
     pub fn train(&mut self) {
-        while !self.stop_flag.load(Ordering::Relaxed) && self.episode_count < self.max_episodes {
+        while !self.stop_flag.load(Ordering::Acquire) && self.episode_count < self.max_episodes {
             self.run_episode();
 
             // Record outcome (before incrementing episode_count, since
@@ -194,9 +194,12 @@ impl ContinuousTrainer {
             // Agent's turn
             let state = self.env.board_as_f64(agent_side);
             let valid = self.env.valid_actions();
-            let action = self.agent.step_masked(&state, &valid, 0.0, false).unwrap();
+            let action = self
+                .agent
+                .step_masked(&state, &valid, 0.0, false)
+                .expect("step_masked failed: valid_actions was non-empty but returned Err");
             self.step_count += 1;
-            self.env.step(action).unwrap();
+            self.env.step(action).expect("agent chose invalid action");
 
             // Opponent's turn (if game not over)
             if !self.env.is_terminal() && self.env.current_player() != agent_side {
@@ -212,7 +215,7 @@ impl ContinuousTrainer {
         let _ = self
             .agent
             .step_masked(&final_state, &final_valid, terminal_reward, true)
-            .unwrap();
+            .expect("terminal step_masked failed unexpectedly");
         self.step_count += 1;
     }
 
@@ -223,6 +226,10 @@ impl ContinuousTrainer {
         } else {
             Player::Two
         };
+        debug_assert!(
+            self.env.is_terminal(),
+            "episode_outcome called on non-terminal game"
+        );
         match self.env.result() {
             GameResult::Win(p) if p == agent_side => GameOutcome::Win,
             GameResult::Win(_) => GameOutcome::Loss,
