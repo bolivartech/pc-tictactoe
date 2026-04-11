@@ -20,10 +20,10 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor::SelectionMode;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
 use pc_rl_core::serializer::{load_agent, save_agent};
+use pc_rl_core::CpuLinAlg;
 
 use crate::env::minimax::MinimaxPlayer;
 use crate::env::tictactoe::{GameResult, Player, TicTacToe};
@@ -148,6 +148,9 @@ pub struct SeedTestArgs {
     /// Path to TOML configuration file.
     #[arg(long, short, default_value = "config.toml")]
     pub config: String,
+    /// Use continuous learning mode (step_masked) instead of episodic.
+    #[arg(long)]
+    pub continuous: bool,
 }
 
 /// Arguments for the init subcommand.
@@ -592,7 +595,11 @@ pub fn run_seed_test(args: SeedTestArgs) -> Result<(), Box<dyn std::error::Error
         b: stdout.lock(),
     };
 
-    let results = experiment::run_seed_test(&config, args.n, &mut writer)?;
+    let results = if args.continuous {
+        experiment::run_seed_test_continuous(&config, args.n, &mut writer)?
+    } else {
+        experiment::run_seed_test(&config, args.n, &mut writer)?
+    };
 
     let summary = format!(
         "\n=== SEED TEST ({} runs, lambda={:.8}) ===\n{:<24} {:<10} {:<10} {:<10} {:<10}\n{}\n",

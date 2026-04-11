@@ -374,6 +374,64 @@ pub fn run_seed_test<W: Write>(
     Ok(all_results)
 }
 
+/// Runs N continuous-learning training runs with fixed config, varying only the seed.
+///
+/// Uses [`ContinuousTrainer`] with `step_masked()` to exercise CL features
+/// (hysteresis, consolidation, EWC). Each run gets a unique random seed.
+///
+/// # Arguments
+///
+/// * `base_config` - Configuration to use for all runs (CL fields should be enabled).
+/// * `n` - Number of runs (random seeds).
+/// * `output` - Writer for results.
+///
+/// # Errors
+///
+/// Returns an error on training or I/O failures.
+pub fn run_seed_test_continuous<W: Write>(
+    base_config: &AppConfig,
+    n: usize,
+    output: &mut W,
+) -> Result<Vec<RunResult>, Box<dyn std::error::Error>> {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    use crate::training::continuous::ContinuousTrainer;
+
+    let mut all_results = Vec::new();
+    let mut rng = rand::thread_rng();
+
+    for _ in 0..n {
+        let seed: u64 = rand::Rng::gen(&mut rng);
+
+        let mut config = base_config.clone();
+        config.training.seed = seed;
+
+        let agent_config = config.to_agent_config()?;
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, seed)?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut trainer = ContinuousTrainer::new(agent, &config, stop);
+
+        trainer.train();
+
+        let result = RunResult {
+            seed,
+            lambda: config.agent.actor.local_lambda,
+            max_depth: trainer.current_depth(),
+            win_rate: trainer.metrics().win_rate(),
+            loss_rate: trainer.metrics().loss_rate(),
+            draw_rate: trainer.metrics().draw_rate(),
+            log_lines: Vec::new(),
+        };
+        write!(output, "{result}")?;
+        output.flush()?;
+        all_results.push(result);
+    }
+
+    Ok(all_results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
