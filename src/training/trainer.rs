@@ -85,6 +85,7 @@ impl Trainer {
     pub fn train(&mut self, num_episodes: usize) {
         for _ in 0..num_episodes {
             let trajectory = self.run_episode();
+            #[allow(deprecated)] // Episodic trainer uses trajectory-based learning intentionally
             self.agent.learn(&trajectory);
 
             // Record outcome

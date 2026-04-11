@@ -13,8 +13,8 @@ use std::io::Write;
 
 use crate::training::trainer::Trainer;
 use crate::utils::config::AppConfig;
-use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
+use pc_rl_core::CpuLinAlg;
 
 /// Which hyperparameter to sweep in the experiment.
 #[derive(Debug, Clone, Copy)]
@@ -104,6 +104,7 @@ pub fn run_single(
 
     for _ in 0..episodes {
         let trajectory = trainer.run_episode_pub();
+        #[allow(deprecated)] // Experiment runner uses trajectory-based learning
         trainer.agent_mut().learn(&trajectory);
         trainer.record_and_advance();
 
@@ -176,6 +177,7 @@ pub fn run_single_with_sweep(
 
     for _ in 0..episodes {
         let trajectory = trainer.run_episode_pub();
+        #[allow(deprecated)] // Experiment runner uses trajectory-based learning
         trainer.agent_mut().learn(&trajectory);
         trainer.record_and_advance();
 
@@ -329,6 +331,7 @@ pub fn run_seed_test<W: Write>(
 
         for _ in 0..episodes {
             let trajectory = trainer.run_episode_pub();
+            #[allow(deprecated)] // Seed test uses trajectory-based learning
             trainer.agent_mut().learn(&trajectory);
             trainer.record_and_advance();
 
