@@ -5,6 +5,19 @@ surprise_high = 0.15
 adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
+# Continuous Learning (all disabled by default)
+# M1 — Surprise-driven scale range
+scale_floor = 0.0
+scale_ceil = 2.0
+# M2 — Hysteresis (dual-EWMA state machines)
+actor_hysteresis = false
+critic_hysteresis = false
+# M3 — Consolidation decay
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+# M4 — EWC
+ewc_lambda = 0.0
 
 [agent.actor]
 input_size = 9
