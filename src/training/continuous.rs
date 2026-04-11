@@ -131,8 +131,9 @@ impl ContinuousTrainer {
             self.episode_count += 1;
 
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
+                let cl_info = self.cl_status_string();
                 let line = format!(
-                    "[ep {:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | depth={depth} steps={steps}",
+                    "[ep {:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | depth={depth} steps={steps}{cl}",
                     self.episode_count,
                     total = self.max_episodes,
                     win = self.metrics.win_rate() * 100.0,
@@ -140,6 +141,7 @@ impl ContinuousTrainer {
                     draw = self.metrics.draw_rate() * 100.0,
                     depth = self.current_depth,
                     steps = self.step_count,
+                    cl = cl_info,
                 );
                 eprintln!("{line}");
                 self.log_lines.push(line);
@@ -261,6 +263,39 @@ impl ContinuousTrainer {
     /// Returns the collected log lines.
     pub fn log_lines(&self) -> &[String] {
         &self.log_lines
+    }
+
+    /// Returns a CL status string for diagnostic logging.
+    ///
+    /// Shows actor/critic plasticity state and EWMA values when
+    /// hysteresis is enabled. Returns empty string when CL is disabled.
+    fn cl_status_string(&self) -> String {
+        let cl = self.agent.to_cl_state();
+        let Some(cl) = cl else {
+            return String::new();
+        };
+        let mut parts = Vec::new();
+        if let Some(ref ah) = cl.actor_hysteresis {
+            let state_ch = match ah.state {
+                pc_rl_core::PlasticityState::Plastic => "P",
+                pc_rl_core::PlasticityState::Frozen => "F",
+            };
+            parts.push(format!(
+                " actor={state_ch}(f={:.4} s={:.4})",
+                ah.fast.value, ah.slow.value
+            ));
+        }
+        if let Some(ref ch) = cl.critic_hysteresis {
+            let state_ch = match ch.state {
+                pc_rl_core::PlasticityState::Plastic => "P",
+                pc_rl_core::PlasticityState::Frozen => "F",
+            };
+            parts.push(format!(
+                " critic={state_ch}(f={:.4} s={:.4})",
+                ch.fast.value, ch.slow.value
+            ));
+        }
+        parts.join("")
     }
 
     /// Returns a reference to the agent.
