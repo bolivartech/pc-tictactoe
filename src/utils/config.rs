@@ -282,6 +282,9 @@ pub struct ContinuousSection {
     /// Maximum episodes for continuous mode.
     #[serde(default = "default_max_episodes")]
     pub max_episodes: usize,
+    /// Use random side assignment instead of alternating.
+    #[serde(default)]
+    pub random_side: bool,
 }
 
 /// Logger configuration.
@@ -565,6 +568,7 @@ impl Default for ContinuousSection {
     fn default() -> Self {
         Self {
             max_episodes: default_max_episodes(),
+            random_side: false,
         }
     }
 }

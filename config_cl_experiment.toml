@@ -19,9 +19,9 @@ scale_ceil = 2.0               # 2x learning rate when surprise is high
 # ── M2: Hysteresis — dual-EWMA FROZEN/PLASTIC state machines ────
 actor_hysteresis = true
 actor_fast_window = 20
-actor_slow_window = 500         # Wider window to smooth Player One/Two oscillation
+actor_slow_window = 500
 actor_wake_fraction = 0.5
-actor_sleep_fraction = 0.10     # Freeze when fast < slow × 0.90
+actor_sleep_fraction = 0.01
 
 critic_hysteresis = true
 critic_fast_window = 20
@@ -94,6 +94,7 @@ window_size = 1000
 
 [continuous]
 max_episodes = 500000
+random_side = true             # Random side assignment to reduce surprise oscillation
 
 [logger]
 level = "info"

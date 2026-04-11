@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use pc_rl_core::pc_actor_critic::PcActorCritic;
+use rand::Rng;
 
 use crate::env::minimax::MinimaxPlayer;
 use crate::env::tictactoe::{GameResult, Player, TicTacToe};
@@ -71,6 +72,12 @@ pub struct ContinuousTrainer {
     log_interval: usize,
     /// Collected log lines for programmatic access.
     log_lines: Vec<String>,
+    /// Use random side assignment instead of alternating.
+    random_side: bool,
+    /// RNG for random side selection.
+    rng: rand::rngs::ThreadRng,
+    /// Agent side for the current episode (set by run_episode, read by episode_outcome).
+    last_agent_side: Player,
 }
 
 impl ContinuousTrainer {
@@ -99,6 +106,9 @@ impl ContinuousTrainer {
             advance_threshold: config.curriculum.advance_threshold,
             log_interval: config.training.log_interval,
             log_lines: Vec::new(),
+            random_side: config.continuous.random_side,
+            rng: rand::thread_rng(),
+            last_agent_side: Player::One,
         }
     }
 
@@ -167,11 +177,20 @@ impl ContinuousTrainer {
         self.env.reset();
         self.agent.reset_step();
 
-        let agent_side = if self.episode_count.is_multiple_of(2) {
+        let agent_side = if self.random_side {
+            if self.rng.gen_bool(0.5) {
+                Player::One
+            } else {
+                Player::Two
+            }
+        } else if self.episode_count.is_multiple_of(2) {
             Player::One
         } else {
             Player::Two
         };
+
+        // Store for episode_outcome()
+        self.last_agent_side = agent_side;
 
         // If agent is Player Two, let opponent move first
         if agent_side == Player::Two && !self.env.is_terminal() {
@@ -223,11 +242,7 @@ impl ContinuousTrainer {
 
     /// Determines the game outcome from the agent's perspective.
     fn episode_outcome(&self) -> GameOutcome {
-        let agent_side = if self.episode_count.is_multiple_of(2) {
-            Player::One
-        } else {
-            Player::Two
-        };
+        let agent_side = self.last_agent_side;
         debug_assert!(
             self.env.is_terminal(),
             "episode_outcome called on non-terminal game"

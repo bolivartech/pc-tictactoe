@@ -575,6 +575,7 @@ window_size = 1000
 
 [continuous]
 max_episodes = 50000
+random_side = false            # true = random, false = alternating (even=P1, odd=P2)
 
 [logger]
 level = "info"
