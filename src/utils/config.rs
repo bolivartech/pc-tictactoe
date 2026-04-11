@@ -127,6 +127,12 @@ pub struct AgentSection {
     /// Minimum critic frozen steps before actor-wakes-critic coupling triggers.
     #[serde(default = "default_actor_wakes_critic_threshold")]
     pub actor_wakes_critic_threshold: u64,
+    /// When critic wakes (high |TD error|), force actor to wake if frozen long enough.
+    #[serde(default = "default_true")]
+    pub critic_wakes_actor: bool,
+    /// Minimum actor frozen steps before critic-wakes-actor coupling triggers.
+    #[serde(default = "default_critic_wakes_actor_threshold")]
+    pub critic_wakes_actor_threshold: u64,
     /// Actor consolidation decay base. Layer i gets decay^(n_hidden-1-i).
     #[serde(default = "default_consolidation_decay")]
     pub consolidation_decay: f64,
@@ -423,6 +429,9 @@ fn default_sleep_fraction() -> f64 {
 fn default_actor_wakes_critic_threshold() -> u64 {
     1000
 }
+fn default_critic_wakes_actor_threshold() -> u64 {
+    1000
+}
 fn default_consolidation_decay() -> f64 {
     1.0
 }
@@ -482,8 +491,10 @@ impl Default for AgentSection {
             critic_slow_window: default_slow_window(),
             critic_wake_fraction: default_wake_fraction(),
             critic_sleep_fraction: default_sleep_fraction(),
-            actor_wakes_critic: false,
+            actor_wakes_critic: true,
             actor_wakes_critic_threshold: default_actor_wakes_critic_threshold(),
+            critic_wakes_actor: true,
+            critic_wakes_actor_threshold: default_critic_wakes_actor_threshold(),
             consolidation_decay: default_consolidation_decay(),
             critic_consolidation_decay: default_consolidation_decay(),
             adaptive_consolidation: false,
@@ -839,6 +850,8 @@ impl AppConfig {
             critic_sleep_fraction: self.agent.critic_sleep_fraction,
             actor_wakes_critic: self.agent.actor_wakes_critic,
             actor_wakes_critic_threshold: self.agent.actor_wakes_critic_threshold,
+            critic_wakes_actor: self.agent.critic_wakes_actor,
+            critic_wakes_actor_threshold: self.agent.critic_wakes_actor_threshold,
             consolidation_decay: self.agent.consolidation_decay,
             critic_consolidation_decay: self.agent.critic_consolidation_decay,
             adaptive_consolidation: self.agent.adaptive_consolidation,
@@ -1087,7 +1100,8 @@ episodes = 5000
         assert!((config.agent.scale_ceil - 2.0).abs() < 1e-12);
         assert!(!config.agent.actor_hysteresis);
         assert!(!config.agent.critic_hysteresis);
-        assert!(!config.agent.actor_wakes_critic);
+        assert!(config.agent.actor_wakes_critic);
+        assert!(config.agent.critic_wakes_actor);
         assert!((config.agent.consolidation_decay - 1.0).abs() < 1e-12);
         assert!((config.agent.critic_consolidation_decay - 1.0).abs() < 1e-12);
         assert!(!config.agent.adaptive_consolidation);

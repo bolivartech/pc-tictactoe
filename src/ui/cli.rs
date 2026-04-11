@@ -514,8 +514,10 @@ critic_fast_window = 20
 critic_slow_window = 100
 critic_wake_fraction = 0.5
 critic_sleep_fraction = 0.3
-actor_wakes_critic = false
+actor_wakes_critic = true
 actor_wakes_critic_threshold = 1000
+critic_wakes_actor = true
+critic_wakes_actor_threshold = 1000
 
 # M3 — Consolidation decay: per-layer learning rate modulation
 consolidation_decay = 1.0      # 1.0 = no decay (all layers equal)
