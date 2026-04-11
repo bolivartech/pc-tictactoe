@@ -86,6 +86,18 @@ pub struct TrainArgs {
     /// Initial ReZero scaling factor for residual connections.
     #[arg(long)]
     pub rezero_init: Option<f64>,
+    /// Enable actor hysteresis (FROZEN/PLASTIC state machine).
+    #[arg(long)]
+    pub actor_hysteresis: bool,
+    /// Enable critic hysteresis (FROZEN/PLASTIC state machine).
+    #[arg(long)]
+    pub critic_hysteresis: bool,
+    /// EWC regularization strength (0.0 = disabled).
+    #[arg(long)]
+    pub ewc_lambda: Option<f64>,
+    /// Scale floor for surprise-driven learning rate (0.0 = true freeze).
+    #[arg(long)]
+    pub scale_floor: Option<f64>,
 }
 
 /// Arguments for the play subcommand.
@@ -186,6 +198,19 @@ pub fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(ri) = args.rezero_init {
         config.agent.actor.rezero_init = ri;
+    }
+
+    if args.actor_hysteresis {
+        config.agent.actor_hysteresis = true;
+    }
+    if args.critic_hysteresis {
+        config.agent.critic_hysteresis = true;
+    }
+    if let Some(ewc) = args.ewc_lambda {
+        config.agent.ewc_lambda = ewc;
+    }
+    if let Some(sf) = args.scale_floor {
+        config.agent.scale_floor = sf;
     }
 
     config.validate()?;
@@ -464,6 +489,39 @@ adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
 
+# Continuous Learning (all disabled by default for backward compatibility)
+# M1 — Scale range: controls surprise-driven learning rate scaling
+scale_floor = 0.0              # 0.0 = true weight freeze when surprise is low
+scale_ceil = 2.0               # Max learning rate multiplier when surprise is high
+
+# M2 — Hysteresis: dual-EWMA FROZEN/PLASTIC state machines
+actor_hysteresis = false
+actor_fast_window = 20
+actor_slow_window = 100
+actor_wake_fraction = 0.5
+actor_sleep_fraction = 0.3
+critic_hysteresis = false
+critic_fast_window = 20
+critic_slow_window = 100
+critic_wake_fraction = 0.5
+critic_sleep_fraction = 0.3
+actor_wakes_critic = false
+actor_wakes_critic_threshold = 1000
+
+# M3 — Consolidation decay: per-layer learning rate modulation
+consolidation_decay = 1.0      # 1.0 = no decay (all layers equal)
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+consolidation_ema_beta = 0.99
+consolidation_sigmoid_k = 10.0
+consolidation_error_threshold = 0.05
+
+# M4 — EWC: Elastic Weight Consolidation
+ewc_lambda = 0.0               # 0.0 = disabled (zero overhead)
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
+logits_reversal = false
+
 [agent.actor]
 input_size = 9
 output_size = 9
@@ -697,5 +755,16 @@ mod tests {
         assert_eq!(config.agent.actor.hidden_layers.len(), 1);
         assert_eq!(config.agent.actor.hidden_layers[0].size, 27);
         assert_eq!(config.agent.critic.input_size, 36);
+    }
+
+    #[test]
+    fn test_default_config_toml_has_cl_fields() {
+        let config: crate::utils::config::AppConfig = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert!((config.agent.scale_floor - 0.0).abs() < 1e-12);
+        assert!((config.agent.scale_ceil - 2.0).abs() < 1e-12);
+        assert!(!config.agent.actor_hysteresis);
+        assert!(!config.agent.critic_hysteresis);
+        assert!((config.agent.ewc_lambda - 0.0).abs() < 1e-12);
+        assert!((config.agent.consolidation_decay - 1.0).abs() < 1e-12);
     }
 }
