@@ -69,6 +69,8 @@ pub struct ContinuousTrainer {
     advance_threshold: f64,
     /// How often to print progress (every N episodes). 0 = silent.
     log_interval: usize,
+    /// Collected log lines for programmatic access.
+    log_lines: Vec<String>,
 }
 
 impl ContinuousTrainer {
@@ -96,6 +98,7 @@ impl ContinuousTrainer {
             current_depth: 1,
             advance_threshold: config.curriculum.advance_threshold,
             log_interval: config.training.log_interval,
+            log_lines: Vec::new(),
         }
     }
 
@@ -128,9 +131,9 @@ impl ContinuousTrainer {
             self.episode_count += 1;
 
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
-                eprintln!(
-                    "[ep {ep:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | depth={depth} steps={steps}",
-                    ep = self.episode_count,
+                let line = format!(
+                    "[ep {:>6}/{total}] win={win:.1}% loss={loss:.1}% draw={draw:.1}% | depth={depth} steps={steps}",
+                    self.episode_count,
                     total = self.max_episodes,
                     win = self.metrics.win_rate() * 100.0,
                     loss = self.metrics.loss_rate() * 100.0,
@@ -138,12 +141,16 @@ impl ContinuousTrainer {
                     depth = self.current_depth,
                     steps = self.step_count,
                 );
+                eprintln!("{line}");
+                self.log_lines.push(line);
             }
             if prev_depth != self.current_depth {
-                eprintln!(
+                let line = format!(
                     "  >> Curriculum advanced: depth {} -> {}",
                     prev_depth, self.current_depth
                 );
+                eprintln!("{line}");
+                self.log_lines.push(line);
             }
         }
     }
@@ -168,6 +175,19 @@ impl ContinuousTrainer {
         if agent_side == Player::Two && !self.env.is_terminal() {
             let opp_action = self.minimax.choose_action(&self.env);
             self.env.step(opp_action).unwrap();
+        }
+
+        // Guard: if game ended before agent could act (defensive; can't happen
+        // in standard TicTacToe but protects against future rule variants)
+        if self.env.is_terminal() {
+            let terminal_reward = self.env.reward(agent_side);
+            let state = self.env.board_as_f64(agent_side);
+            let valid: Vec<usize> = (0..9).collect();
+            let _ = self
+                .agent
+                .step_masked(&state, &valid, terminal_reward, true);
+            self.step_count += 1;
+            return;
         }
 
         while !self.env.is_terminal() {
@@ -229,6 +249,11 @@ impl ContinuousTrainer {
     /// Returns a reference to the metrics tracker.
     pub fn metrics(&self) -> &Metrics {
         &self.metrics
+    }
+
+    /// Returns the collected log lines.
+    pub fn log_lines(&self) -> &[String] {
+        &self.log_lines
     }
 
     /// Returns a reference to the agent.

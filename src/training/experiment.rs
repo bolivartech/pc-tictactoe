@@ -422,7 +422,7 @@ pub fn run_seed_test_continuous<W: Write>(
             win_rate: trainer.metrics().win_rate(),
             loss_rate: trainer.metrics().loss_rate(),
             draw_rate: trainer.metrics().draw_rate(),
-            log_lines: Vec::new(),
+            log_lines: trainer.log_lines().to_vec(),
         };
         write!(output, "{result}")?;
         output.flush()?;

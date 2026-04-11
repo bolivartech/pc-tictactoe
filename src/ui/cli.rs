@@ -567,7 +567,6 @@ window_size = 1000
 
 [continuous]
 max_episodes = 50000
-surprise_threshold = 0.1
 
 [logger]
 level = "info"

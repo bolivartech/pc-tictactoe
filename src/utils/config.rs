@@ -271,9 +271,6 @@ pub struct ContinuousSection {
     /// Maximum episodes for continuous mode.
     #[serde(default = "default_max_episodes")]
     pub max_episodes: usize,
-    /// Surprise threshold for immediate updates.
-    #[serde(default = "default_surprise_threshold")]
-    pub surprise_threshold: f64,
 }
 
 /// Logger configuration.
@@ -384,9 +381,6 @@ fn default_window_size() -> usize {
 }
 fn default_max_episodes() -> usize {
     50000
-}
-fn default_surprise_threshold() -> f64 {
-    0.1
 }
 fn default_log_level() -> String {
     "info".to_string()
@@ -554,7 +548,6 @@ impl Default for ContinuousSection {
     fn default() -> Self {
         Self {
             max_episodes: default_max_episodes(),
-            surprise_threshold: default_surprise_threshold(),
         }
     }
 }
