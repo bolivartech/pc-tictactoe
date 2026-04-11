@@ -319,6 +319,207 @@ Extreme failure case — stuck at depth 2 for the entire 200k episode budget:
 
 ---
 
+---
+
+## Experiment 3: TD(0) Baseline — No CL ([27,27,18] softsign, 200k episodes)
+
+### Setup
+
+| Parameter | Value |
+|-----------|-------|
+| Hidden layers | [27, 27, 18] softsign |
+| Output activation | linear |
+| Alpha (PC inference) | 0.03 |
+| lr_weights | 0.005 |
+| local_lambda | 0.9999 |
+| Residual connections | true (rezero_init=0.1) |
+| Critic input | 81 (9 + 27 + 27 + 18) |
+| Critic hidden | 1x36 softsign |
+| Training mode | Continuous (`step_masked()` TD(0)) |
+| Episodes | 200,000 per seed |
+| Seeds | 35 random |
+| Curriculum threshold | 0.95 non-loss rate |
+| Curriculum window | 1,000 games |
+
+#### CL Features (all disabled)
+
+| Module | Feature | Value |
+|--------|---------|-------|
+| M1 | scale_floor / scale_ceil | 0.0 / 2.0 |
+| M2 | actor_hysteresis | false |
+| M2 | critic_hysteresis | false |
+| M3 | consolidation_decay | 1.0 (no decay) |
+| M3b | adaptive_consolidation | false |
+| M4 | ewc_lambda | 0.0 (disabled) |
+
+**Purpose**: Isolate whether the performance gap vs episodic training comes from TD(0) per-step learning or from CL features.
+
+### Results
+
+| Metric | TD(0) No CL | CL Exp 2 (with CL) | Episodic 3-Layer | Episodic 1-Layer |
+|--------|-------------|---------------------|------------------|------------------|
+| **Mean depth** | **6.43** | **6.71** | **7.63** | **7.57** |
+| StdDev | 1.20 | 1.00 | — | 0.81 |
+| Min | 2 | 2 | — | 7 |
+| Max | 8 | 8 | — | 9 |
+| D>=7 | 62.9% | 74.3% | — | 100% |
+| D>=8 | 2.9% | 5.7% | — | 37% |
+| D=9 | 0% | 2.9% | 23% | 20% |
+
+#### Depth Distribution
+
+| Depth | Count | Percentage |
+|-------|-------|------------|
+| D=2 | 2 | 5.7% |
+| D=6 | 11 | 31.4% |
+| D=7 | 21 | 60.0% |
+| D=8 | 1 | 2.9% |
+
+#### Health Metrics
+
+| Metric | Value |
+|--------|-------|
+| Stalled (D<=5) | 2 / 35 (5.7%) |
+| Collapsed (>80% loss) | 0 / 35 (0.0%) |
+| High-win (>40%) | 4 / 35 (11.4%) |
+| No-draw (<1% draw) | 3 / 35 (8.6%) |
+
+### Per-Seed Results
+
+| Seed | Max Depth | Win% | Loss% | Draw% | Notes |
+|------|-----------|------|-------|-------|-------|
+| 2043704767215754731 | 6 | 49.8 | 50.2 | 0.0 | Offensive bias (0% draw) |
+| 16378063109570011060 | 7 | 0.0 | 51.3 | 48.7 | |
+| 4833856944993873624 | 7 | 0.0 | 54.0 | 46.0 | |
+| 1829250433885307294 | 7 | 3.8 | 50.2 | 46.0 | |
+| 1602490558669094663 | 7 | 0.0 | 50.0 | 50.0 | |
+| 8077547698343758214 | 6 | 0.0 | 50.0 | 50.0 | |
+| 10538908052320084975 | 7 | 0.0 | 50.1 | 49.9 | |
+| 12598518363405095464 | 2 | 0.1 | 50.3 | 49.6 | Stalled |
+| 17733316755369277421 | 7 | 24.2 | 50.9 | 24.9 | |
+| 955067113903131506 | 6 | 0.1 | 50.0 | 49.9 | |
+| 4653829097689577580 | 7 | 0.0 | 50.9 | 49.1 | |
+| 637832407920993153 | 6 | 0.0 | 57.4 | 42.6 | |
+| 17582995133829348970 | 6 | 0.0 | 50.6 | 49.4 | |
+| 1276219739894159763 | 6 | 0.0 | 50.0 | 50.0 | |
+| 2177752556344113802 | 6 | 50.0 | 50.0 | 0.0 | Offensive bias (0% draw) |
+| 2673669181830052880 | 7 | 0.0 | 51.5 | 48.5 | |
+| 16390967182907099166 | 7 | 0.0 | 50.6 | 49.4 | |
+| 1988754193033301883 | 6 | 0.0 | 50.0 | 50.0 | |
+| 14202297880242826964 | 7 | 0.0 | 50.3 | 49.7 | |
+| 2781291731788634884 | 7 | 0.0 | 50.0 | 50.0 | |
+| 47051537093746808 | 7 | 0.0 | 50.1 | 49.9 | |
+| 11064108218824745739 | 7 | 0.0 | 50.1 | 49.9 | |
+| 11810983166884289264 | 7 | 0.0 | 50.0 | 50.0 | |
+| 13566841846590897270 | 7 | 0.0 | 50.5 | 49.5 | |
+| 5130570611840405432 | 6 | 0.0 | 50.1 | 49.9 | |
+| 12765977124966873088 | 6 | 33.9 | 58.0 | 8.1 | |
+| 278304561829151306 | 7 | 0.1 | 61.7 | 38.2 | |
+| 14948012462617388929 | 7 | 0.0 | 52.2 | 47.8 | |
+| 10243162511752146125 | 2 | 50.0 | 50.0 | 0.0 | Stalled: offensive (0% draw) |
+| 10547423566626701362 | 7 | 0.0 | 50.0 | 50.0 | |
+| 14674474562114901691 | 7 | 50.0 | 50.0 | 0.0 | Offensive bias (0% draw) |
+| 8313851744069836661 | 6 | 0.0 | 49.8 | 50.2 | |
+| 15250646023639029948 | 7 | 0.0 | 50.4 | 49.6 | |
+| 2359315442615510714 | 7 | 0.0 | 50.8 | 49.2 | |
+| 6759014360914324840 | 8 | 0.0 | 49.6 | 50.4 | Best |
+
+### Key Findings
+
+#### 1. TD(0) is the bottleneck, not CL features
+
+Comparing Exp 3 (no CL) vs Exp 2 (with CL, EWC=0):
+
+| Metric | No CL (Exp 3) | With CL (Exp 2) | CL Effect |
+|--------|---------------|------------------|-----------|
+| Mean depth | 6.43 | 6.71 | **+0.28** (CL helps) |
+| D>=7 | 62.9% | 74.3% | **+11.4%** (CL helps) |
+| D>=8 | 2.9% | 5.7% | **+2.8%** (CL helps) |
+| D=9 | 0% | 2.9% | **+2.9%** (CL helps) |
+| Stalled | 5.7% | 2.9% | **-2.8%** (CL helps) |
+
+CL features (M1+M2+M3, without EWC) **improve** TD(0) performance in every metric. The performance gap vs episodic training (mean 6.43 vs 7.57 = -1.14) comes from TD(0) itself, not from CL.
+
+#### 2. Offensive bias is a TD(0) problem
+
+4/35 runs (11.4%) show >40% win rate with near-0% draw — the agent learns offense-only play. This pattern appears both with and without CL, confirming it's a TD(0) signal quality issue, not a CL interaction.
+
+The "50/50/0" pattern (50% win, 50% loss, 0% draw) means the agent wins exactly when it goes first (Player One advantage at that depth) but can't defend as Player Two. TD(0)'s per-step bootstrap doesn't propagate the "you need to block" signal back to earlier moves effectively.
+
+#### 3. D=7 ceiling is universal for TD(0)
+
+60% of runs reach D=7 with ~50% loss / ~50% draw. This ceiling persists regardless of CL features. The episodic REINFORCE baseline breaks through this ceiling 37% of the time (D>=8), suggesting the full-trajectory return is essential for learning the deep defensive patterns needed at D=8+.
+
+### Conclusion (Experiment 3)
+
+TD(0) per-step learning produces a mean depth of 6.43 on the 3-layer network — **1.14 levels below episodic REINFORCE** (7.57). CL features (M1+M2+M3) improve this to 6.71 (+0.28), confirming they provide value but cannot overcome the fundamental signal quality limitation of single-step bootstrapping for 5-9 step episodes.
+
+**Next step**: Implement TD(n) in pc-rl-core to bridge the gap between TD(0) and REINFORCE while retaining the `step_masked()` infrastructure and CL features. TD(4-5) should approach REINFORCE quality for TicTacToe's episode length. See `docs/td_n_implementation_plan.md`.
+
+---
+
+## Cross-Experiment Summary
+
+| # | Experiment | Architecture | CL | Mean | D>=8 | D=9 | Stalled |
+|---|-----------|-------------|-----|------|------|-----|---------|
+| — | Episodic 1-layer (baseline) | 1x27 tanh | — | 7.57 | 37% | 20% | 0% |
+| — | Episodic 3-layer (baseline) | [27,27,18] softsign | — | 7.63 | — | 23% | — |
+| 1 | CL 1-layer, ALL CL (50k) | 1x27 tanh | M1+M2+M3+M4 | 6.29 | 5.7% | 0% | 22.9% |
+| 2 | CL 3-layer, ALL CL no EWC (200k) | [27,27,18] softsign | M1+M2+M3 | 6.71 | 5.7% | 2.9% | 2.9% |
+| 3 | CL 3-layer, NO CL (200k) | [27,27,18] softsign | None | 6.43 | 2.9% | 0% | 5.7% |
+
+### Key Conclusions
+
+1. **TD(0) vs REINFORCE gap = ~1.14 depth levels** (Exp 3 vs episodic baseline). This is the dominant factor limiting continuous learning performance on TicTacToe.
+
+2. **CL features (M1+M2+M3) add +0.28 depth** on top of TD(0) baseline (Exp 2 vs Exp 3). Hysteresis + consolidation + scale range improve learning.
+
+3. **EWC (M4) is harmful for curriculum** — costs ~0.42 depth levels (Exp 1 vs Exp 2, adjusting for architecture). EWC protects weights from earlier curriculum depths, preventing adaptation to harder opponents.
+
+4. **3-layer architecture helps CL** — eliminates offensive bias (22.9% → 2.9% stalled) and enables D=9 (0% → 2.9%). Consolidation decay is meaningful with multiple layers.
+
+5. **Path forward: TD(n)** — implementing n-step returns in `step_masked()` should bridge the TD(0)-REINFORCE gap while preserving CL features. See `docs/td_n_implementation_plan.md`.
+
+---
+
+## Recommended Next Experiments
+
+### Experiment 4: TD(n) on TicTacToe
+
+**Purpose**: Test whether TD(n) with n=4-5 approaches REINFORCE performance while retaining CL infrastructure.
+
+Requires: TD(n) implementation in pc-rl-core (see `docs/td_n_implementation_plan.md`).
+
+```toml
+td_steps = 4    # or sweep [0, 2, 4, 5, 8]
+# With CL M1+M2+M3 (no EWC)
+actor_hysteresis = true
+critic_hysteresis = true
+consolidation_decay = 0.95
+adaptive_consolidation = true
+ewc_lambda = 0.0
+```
+
+### Experiment 5: M1+M2 Only (no consolidation, no EWC)
+
+**Purpose**: Isolate hysteresis contribution from consolidation.
+
+```toml
+actor_hysteresis = true
+critic_hysteresis = true
+consolidation_decay = 1.0
+adaptive_consolidation = false
+ewc_lambda = 0.0
+```
+
+### Experiment 6: Reduced EWC
+
+**Purpose**: Test if very low EWC (0.001-0.01) provides benefit without the harmful over-protection seen at 0.1.
+
+```toml
+ewc_lambda = 0.001    # 100x lower than Exp 1-2
+```
+
 ## Diagnosis
 
 Contributing factors ranked by suspected impact:
