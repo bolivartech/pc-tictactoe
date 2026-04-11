@@ -604,9 +604,10 @@ pub fn run_seed_test(args: SeedTestArgs) -> Result<(), Box<dyn std::error::Error
     };
 
     let summary = format!(
-        "\n=== SEED TEST ({} runs, lambda={:.8}) ===\n{:<24} {:<10} {:<10} {:<10} {:<10}\n{}\n",
+        "\n=== SEED TEST ({} runs, lambda={:.8}) ===\n{:<6} {:<24} {:<10} {:<10} {:<10} {:<10}\n{}\n",
         results.len(),
         results.first().map(|r| r.lambda).unwrap_or(0.0),
+        "run",
         "seed",
         "max_depth",
         "win%",
@@ -615,7 +616,8 @@ pub fn run_seed_test(args: SeedTestArgs) -> Result<(), Box<dyn std::error::Error
         results
             .iter()
             .map(|r| format!(
-                "{:<24} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                "{:<6} {:<24} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                r.run_number,
                 r.seed,
                 r.max_depth,
                 r.win_rate * 100.0,
@@ -689,9 +691,10 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
     // Summary table
     let sweep_col = sweep.name();
     let summary = format!(
-        "\n=== SUMMARY ({} runs, sweep={}) ===\n{:<8} {:<8} {:<10} {:<10} {:<10} {:<10}\n{}\n",
+        "\n=== SUMMARY ({} runs, sweep={}) ===\n{:<6} {:<8} {:<8} {:<10} {:<10} {:<10} {:<10}\n{}\n",
         results.len(),
         sweep_col,
+        "run",
         "seed",
         "lambda",
         "max_depth",
@@ -701,7 +704,8 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
         results
             .iter()
             .map(|r| format!(
-                "{:<8} {:<8.2} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                "{:<6} {:<8} {:<8.2} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                r.run_number,
                 r.seed,
                 r.lambda,
                 r.max_depth,
