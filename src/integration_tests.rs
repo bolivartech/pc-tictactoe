@@ -9,12 +9,12 @@
 
 #[cfg(test)]
 mod tests {
-    use pc_rl_core::CpuLinAlg;
     use pc_rl_core::pc_actor::SelectionMode;
     use pc_rl_core::pc_actor_critic::PcActorCritic;
     use pc_rl_core::serializer::{load_agent, save_agent};
+    use pc_rl_core::CpuLinAlg;
 
-    use crate::env::tictactoe::TicTacToe;
+    use crate::env::tictactoe::{Player, TicTacToe};
     use crate::utils::config::{AppConfig, HiddenLayerDef};
 
     /// Creates an agent from default AppConfig.
@@ -151,7 +151,8 @@ mod tests {
 
         // Also verify we can create an agent from this config
         let agent_config = config.to_agent_config().unwrap();
-        let mut agent: PcActorCritic = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+        let mut agent: PcActorCritic =
+            PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
 
         // Play a game to verify topology works end-to-end
         let mut env = TicTacToe::new();
@@ -161,6 +162,89 @@ mod tests {
             let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
             env.step(action).unwrap();
         }
+        assert!(env.is_terminal());
+    }
+
+    // ── CL (Continuous Learning) Integration Tests ──────────────────────
+
+    /// Creates a CL-enabled agent from config with hysteresis enabled.
+    fn cl_agent_from_config() -> PcActorCritic {
+        let mut config = AppConfig::default();
+        config.agent.actor_hysteresis = true;
+        config.agent.critic_hysteresis = true;
+        config.agent.scale_floor = 0.0;
+        config.agent.ewc_lambda = 0.1;
+        config.agent.consolidation_decay = 0.95;
+        let agent_config = config.to_agent_config().unwrap();
+        PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap()
+    }
+
+    #[test]
+    fn test_cl_agent_plays_complete_game() {
+        let mut agent = cl_agent_from_config();
+        let mut env = TicTacToe::new();
+        while !env.is_terminal() {
+            let state = env.board_as_f64(env.current_player());
+            let valid = env.valid_actions();
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+            env.step(action).unwrap();
+        }
+        assert!(env.is_terminal());
+    }
+
+    #[test]
+    fn test_cl_save_load_preserves_config() {
+        let agent = cl_agent_from_config();
+        let dir = std::env::temp_dir().join(format!("pc_cl_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("cl_session.json");
+        let path_str = path.to_string_lossy().to_string();
+
+        save_agent(&agent, &path_str, 100, None).unwrap();
+        let (loaded, metadata) = load_agent(&path_str, CpuLinAlg::new()).unwrap();
+
+        assert_eq!(metadata.episode, 100);
+        assert!(loaded.config.actor_hysteresis);
+        assert!(loaded.config.critic_hysteresis);
+        assert!((loaded.config.scale_floor - 0.0).abs() < 1e-12);
+        assert!((loaded.config.ewc_lambda - 0.1).abs() < 1e-12);
+        assert!((loaded.config.consolidation_decay - 0.95).abs() < 1e-12);
+
+        // Loaded CL agent can still play
+        let mut loaded_agent = loaded;
+        let mut env = TicTacToe::new();
+        while !env.is_terminal() {
+            let state = env.board_as_f64(env.current_player());
+            let valid = env.valid_actions();
+            let (action, _) = loaded_agent.act(&state, &valid, SelectionMode::Play);
+            env.step(action).unwrap();
+        }
+        assert!(env.is_terminal());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_step_masked_completes_episode() {
+        let mut agent = cl_agent_from_config();
+        let mut env = TicTacToe::new();
+        agent.reset_step();
+
+        let mut steps = 0;
+        while !env.is_terminal() {
+            let state = env.board_as_f64(env.current_player());
+            let valid = env.valid_actions();
+            let action = agent.step_masked(&state, &valid, 0.0, false).unwrap();
+            steps += 1;
+            env.step(action).unwrap();
+        }
+
+        // Terminal step
+        let final_state = env.board_as_f64(Player::One);
+        let final_valid: Vec<usize> = (0..9).collect();
+        let _ = agent.step_masked(&final_state, &final_valid, 0.0, true);
+
+        assert!(steps > 0);
         assert!(env.is_terminal());
     }
 }
