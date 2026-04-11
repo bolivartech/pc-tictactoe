@@ -520,89 +520,198 @@ ewc_lambda = 0.0
 ewc_lambda = 0.001    # 100x lower than Exp 1-2
 ```
 
-## Diagnosis
+---
 
-Contributing factors ranked by suspected impact:
+## Experiment 4: ALL CL + EWC=0.001 ([27,27,18] softsign, 200k episodes)
 
-### 1. EWC Over-Protection (ewc_lambda=0.1) — PRIMARY SUSPECT
+### Setup
 
-EWC anchors weights to solutions learned at earlier curriculum depths. When advancing from depth N to N+1, the agent needs to adjust its policy significantly — but EWC penalizes deviations from the depth-N solution. Evidence:
-- D=2 stalled run: offensive weights from D=1 locked in, preventing defensive adaptation
-- D=7 ceiling: weights optimized for D<=6 resist the fine adjustments needed for D=7+
-- Curriculum levels are the **same task** at increasing difficulty — EWC's inter-task forgetting protection is counterproductive here
+Same as Experiment 2 except `ewc_lambda = 0.001` (100x lower than Exp 1-2 which used 0.1).
 
-### 2. Hysteresis Premature Freezing — SECONDARY
+**Purpose**: Test if micro-EWC provides benefit without the over-protection seen at 0.1.
 
-When surprise drops at a local optimum (agent learned current depth), hysteresis transitions to FROZEN. After curriculum advancement introduces a harder opponent, the FROZEN→PLASTIC wake transition requires surprise to exceed the slow EWMA. If the agent's offense still produces some wins, surprise may not spike enough to wake learning quickly.
+### Results
 
-### 3. TD(0) Signal Quality — NEEDS ISOLATION
+| Metric | EWC=0.001 (Exp 4) | EWC=0 (Exp 2) | No CL (Exp 3) |
+|--------|---------------------|----------------|----------------|
+| **Mean depth** | **6.43** | **6.71** | **6.43** |
+| StdDev | 1.20 | 1.00 | 1.20 |
+| D>=7 | 62.9% | 74.3% | 62.9% |
+| D>=8 | 2.9% | 5.7% | 2.9% |
+| D=9 | 0% | 2.9% | 0% |
+| Stalled D<=5 | 5.7% | 2.9% | 5.7% |
+| High-win (>40%) | **25.7%** | 0% | 11.4% |
+| No-draw (<1%) | **22.9%** | 0% | 8.6% |
 
-TicTacToe episodes are 5-9 steps. Full trajectory REINFORCE captures the complete game outcome; TD(0) uses per-step bootstrapped estimates. For short episodes, trajectory-level credit assignment may be more informative. This factor is **confounded** with the CL features — a TD(0) baseline without CL is needed to isolate it.
+#### Depth Distribution
 
-### 4. Consolidation Decay — MINOR/NEUTRAL
+| Depth | Count | Percentage |
+|-------|-------|------------|
+| D=2 | 2 | 5.7% |
+| D=6 | 11 | 31.4% |
+| D=7 | 21 | 60.0% |
+| D=8 | 1 | 2.9% |
 
-With 3 layers, `consolidation_decay=0.95` creates a meaningful hierarchy. The improvement from Exp 1→Exp 2 partly reflects this. However, the decay may be too aggressive — shallow layers consolidate before learning sufficient representations.
+### Key Finding: EWC=0.001 Worsens Offensive Bias
+
+EWC=0.001 produced the **worst offensive bias** of all experiments: 25.7% of runs (9/35) ended with >40% win rate and near-0% draws. This is worse than no CL at all (11.4%).
+
+**Mechanism**: Even at 0.001, EWC anchors offensive weights learned at early depths. When the agent needs to learn defensive play (draws), the penalty resists the weight changes needed. The effect is subtle but accumulates over thousands of episodes, trapping 25% of seeds in offensive-only local minima.
+
+### Conclusion (Experiment 4)
+
+EWC=0.001 erases the benefit of CL features (M1+M2+M3), producing results identical to TD(0) without CL (mean 6.43) while adding severe offensive bias. Even micro-EWC is counterproductive for curriculum learning.
 
 ---
 
-## Recommended Follow-Up Experiments
+## Experiment 5: ALL CL + EWC=0.01 ([27,27,18] softsign, 200k episodes)
 
-### Experiment 3: TD(0) Baseline (no CL features)
+### Setup
 
-**Purpose**: Isolate whether the performance gap comes from TD(0) vs REINFORCE or from the CL features.
+Same as Experiment 2 except `ewc_lambda = 0.01` (10x lower than Exp 1-2).
+
+**Purpose**: Test intermediate EWC strength between 0.001 and 0.1.
+
+### Results
+
+| Metric | EWC=0.01 (Exp 5) | EWC=0 (Exp 2) | EWC=0.001 (Exp 4) | No CL (Exp 3) |
+|--------|-------------------|----------------|---------------------|----------------|
+| **Mean depth** | **6.71** | **6.71** | **6.43** | **6.43** |
+| StdDev | **0.45** | 1.00 | 1.20 | 1.20 |
+| D>=7 | 71.4% | 74.3% | 62.9% | 62.9% |
+| D>=8 | **0%** | 5.7% | 2.9% | 2.9% |
+| D=9 | **0%** | 2.9% | 0% | 0% |
+| Stalled D<=5 | **0%** | 2.9% | 5.7% | 5.7% |
+| High-win (>40%) | 2.9% | 0% | 25.7% | 11.4% |
+| No-draw (<1%) | 5.7% | 0% | 22.9% | 8.6% |
+
+#### Depth Distribution
+
+| Depth | Count | Percentage |
+|-------|-------|------------|
+| D=6 | 10 | 28.6% |
+| D=7 | 25 | 71.4% |
+
+### Key Finding: EWC=0.01 Is a Variance Compressor
+
+EWC=0.01 has a unique profile:
+- **Most consistent** experiment: SD=0.45 (half of EWC=0's 1.00)
+- **Zero stalls**: No runs stuck at D<=5 — the regularization prevents catastrophic early failures
+- **Zero breakthroughs**: No D>=8 — the regularization also prevents the weight adjustments needed to break the D=7 barrier
+- All 35 runs fall exactly in D=6 or D=7
+
+EWC=0.01 acts as a **stabilizer that compresses variance in both directions**. It eliminates bad outliers (stalls) but also eliminates good outliers (D=9 breakthroughs).
+
+### Per-Seed Results
+
+| Seed | Max Depth | Win% | Loss% | Draw% | Notes |
+|------|-----------|------|-------|-------|-------|
+| 10612898363319890476 | 6 | 0.0 | 50.2 | 49.8 | |
+| 14591736869251471028 | 7 | 0.0 | 50.0 | 50.0 | |
+| 2196172497182831787 | 7 | 31.2 | 38.0 | 30.8 | |
+| 9655392786921996517 | 7 | 0.0 | 51.8 | 48.2 | |
+| 157609645414484935 | 7 | 0.0 | 100.0 | 0.0 | Collapsed (100% loss) |
+| 767712270205390717 | 6 | 0.0 | 52.2 | 47.8 | |
+| 8818346561871798133 | 7 | 0.0 | 51.7 | 48.3 | |
+| 131026663809412892 | 7 | 0.0 | 50.2 | 49.8 | |
+| 16106870278067712081 | 7 | 0.0 | 50.5 | 49.5 | |
+| 4789593483134899290 | 7 | 0.0 | 50.8 | 49.2 | |
+| 4850978948952663190 | 7 | 0.0 | 57.1 | 42.9 | |
+| 4079923755026591305 | 7 | 0.0 | 50.1 | 49.9 | |
+| 12574805091622085408 | 7 | 0.0 | 50.1 | 49.9 | |
+| 7060496949895095296 | 7 | 0.0 | 50.0 | 50.0 | |
+| 12291377338625711910 | 6 | 21.8 | 75.9 | 2.3 | |
+| 1923619048265451022 | 7 | 0.2 | 52.6 | 47.2 | |
+| 9913965660871889779 | 6 | 49.8 | 50.0 | 0.2 | Offensive bias |
+| 5229569336883715921 | 6 | 0.0 | 50.5 | 49.5 | |
+| 3958872925701857175 | 7 | 0.0 | 53.4 | 46.6 | |
+| 4827886763911061407 | 6 | 0.0 | 49.9 | 50.1 | |
+| 7795743518564972618 | 6 | 0.0 | 50.0 | 50.0 | |
+| 16045343278116472324 | 6 | 0.0 | 50.2 | 49.8 | |
+| 3529563798045221285 | 6 | 0.0 | 50.3 | 49.7 | |
+| 950071532918290141 | 7 | 0.0 | 51.0 | 49.0 | |
+| 1263431426212177929 | 7 | 0.0 | 50.6 | 49.4 | |
+| 8405823101689603585 | 7 | 0.1 | 50.4 | 49.5 | |
+| 11354176146632036039 | 7 | 0.0 | 51.1 | 48.9 | |
+| 3422226114505585424 | 6 | 0.0 | 49.9 | 50.1 | |
+| 15586799941651308502 | 7 | 0.0 | 50.2 | 49.8 | |
+| 11566606896045375378 | 7 | 0.0 | 50.4 | 49.6 | |
+| 699405758796758849 | 7 | 0.0 | 54.8 | 45.2 | |
+| 15316936686473200466 | 7 | 0.0 | 50.3 | 49.7 | |
+| 14812081037241177562 | 7 | 0.0 | 50.0 | 50.0 | |
+| 6805287656426657652 | 7 | 0.0 | 50.3 | 49.7 | |
+| 3972698476113938481 | 7 | 0.0 | 53.0 | 47.0 | |
+
+### Conclusion (Experiment 5)
+
+EWC=0.01 matches EWC=0 on mean depth (6.71) and eliminates stalls, but creates a hard ceiling at D=7 with zero D>=8 breakthroughs. It trades exploration potential for stability — useful if consistency matters more than peak performance.
+
+---
+
+## Cross-Experiment Summary
+
+| # | Experiment | EWC | Mean | SD | D>=8 | D=9 | Stalled | High-Win | No-Draw |
+|---|-----------|-----|------|----|------|-----|---------|----------|---------|
+| — | Episodic REINFORCE (baseline) | — | 7.57 | 0.81 | 37% | 20% | 0% | — | — |
+| 1 | CL 1-layer, ALL CL (50k) | 0.1 | 6.29 | 1.23 | 5.7% | 0% | 22.9% | — | — |
+| 2 | CL 3-layer, M1+M2+M3 (200k) | **0** | **6.71** | 1.00 | **5.7%** | **2.9%** | 2.9% | **0%** | **0%** |
+| 3 | TD(0) NO CL (200k) | — | 6.43 | 1.20 | 2.9% | 0% | 5.7% | 11.4% | 8.6% |
+| 4 | CL 3-layer, ALL CL (200k) | 0.001 | 6.43 | 1.20 | 2.9% | 0% | 5.7% | 25.7% | 22.9% |
+| 5 | CL 3-layer, ALL CL (200k) | 0.01 | 6.71 | **0.45** | 0% | 0% | **0%** | 2.9% | 5.7% |
+
+### EWC Impact on Curriculum Learning
+
+| EWC Lambda | Effect on Curriculum |
+|------------|---------------------|
+| 0 | **Best overall**: highest D>=8 rate, only config to reach D=9, zero offensive bias |
+| 0.001 | **Worst**: erases CL benefit, severe offensive bias (25.7% high-win) |
+| 0.01 | **Most stable** (SD=0.45) but caps at D=7 — zero breakthroughs |
+| 0.1 | **Harmful**: 1-layer stalls at 22.9%, anchors offensive weights |
+
+**Conclusion**: EWC is counterproductive for curriculum learning at any positive value. Curriculum levels are the same task at increasing difficulty — EWC's inter-task forgetting protection anchors weights to inferior solutions from earlier depths, preventing the adaptation needed for harder opponents.
+
+The non-monotonic behavior (0.001 worse than 0.01) suggests EWC interacts with hysteresis in complex ways: very low EWC may allow partial weight updates that drift toward offense without the stabilizing constraint that higher EWC provides, while higher EWC constrains exploration uniformly.
+
+### Key Conclusions (Updated)
+
+1. **TD(0) vs REINFORCE gap = ~1.14 depth levels** (Exp 3 vs episodic baseline). This is the dominant factor.
+
+2. **CL features (M1+M2+M3) add +0.28 depth** on top of TD(0) baseline when EWC=0 (Exp 2 vs Exp 3).
+
+3. **EWC is harmful for curriculum** at any positive value. Best performance is always EWC=0.
+
+4. **EWC=0.01 is useful only if consistency matters more than peak depth** — eliminates stalls but caps at D=7.
+
+5. **Path forward: TD(n)** — implementing n-step returns in `step_masked()` should bridge the TD(0)-REINFORCE gap while preserving CL features.
+
+---
+
+## Recommended Next Experiments
+
+### Experiment 6: TD(n) on TicTacToe
+
+**Purpose**: Bridge the TD(0)-REINFORCE gap using n-step returns while retaining CL infrastructure.
+
+Requires: TD(n) implementation in pc-rl-core.
 
 ```toml
-# 3-layer network, CL completely disabled
-scale_floor = 0.0
-scale_ceil = 2.0
-actor_hysteresis = false
-critic_hysteresis = false
-consolidation_decay = 1.0
-adaptive_consolidation = false
-ewc_lambda = 0.0
-```
-
-### Experiment 4: M1+M2 Only (no EWC, no consolidation)
-
-**Purpose**: Test whether hysteresis alone helps or hurts, removing the primary suspect (EWC).
-
-```toml
-scale_floor = 0.0
-scale_ceil = 2.0
-actor_hysteresis = true
-critic_hysteresis = true
-consolidation_decay = 1.0
-adaptive_consolidation = false
-ewc_lambda = 0.0
-```
-
-### Experiment 5: Reduced EWC
-
-**Purpose**: Find a useful EWC strength if complete removal is too aggressive.
-
-```toml
-ewc_lambda = 0.01             # 10x lower than Exp 1-2
-# or
-ewc_lambda = 0.001            # 100x lower
-```
-
-### Experiment 6: M1+M2+M3 (no EWC)
-
-**Purpose**: Test consolidation decay without EWC interference, on 3-layer network.
-
-```toml
-scale_floor = 0.0
-scale_ceil = 2.0
+td_steps = 4    # or sweep [0, 2, 4, 5, 8]
+# With best CL config (M1+M2+M3, no EWC)
 actor_hysteresis = true
 critic_hysteresis = true
 consolidation_decay = 0.95
 adaptive_consolidation = true
-ewc_lambda = 0.0              # No EWC
+ewc_lambda = 0.0
 ```
 
-### Priority Order
+### Experiment 7: M1+M2 Only (no consolidation, no EWC)
 
-1. **Experiment 3** (TD(0) baseline) — establishes whether TD(0) itself is viable
-2. **Experiment 4** (M1+M2 only) — tests if hysteresis helps without EWC drag
-3. **Experiment 6** (M1+M2+M3) — adds consolidation without EWC
-4. **Experiment 5** (reduced EWC) — only if M1+M2+M3 shows promise
+**Purpose**: Isolate hysteresis contribution from consolidation.
+
+```toml
+actor_hysteresis = true
+critic_hysteresis = true
+consolidation_decay = 1.0
+adaptive_consolidation = false
+ewc_lambda = 0.0
+```
