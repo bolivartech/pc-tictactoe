@@ -321,6 +321,8 @@ pub fn run_seed_test<W: Write>(
 
     for _ in 0..n {
         let seed: u64 = rand::Rng::gen(&mut rng);
+        let run_number = all_results.len() + 1;
+        eprintln!("======= Run {run_number}/{n} (seed={seed}) =======");
 
         let mut config = base_config.clone();
         config.training.seed = seed;
@@ -410,6 +412,8 @@ pub fn run_seed_test_continuous<W: Write>(
 
     for _ in 0..n {
         let seed: u64 = rand::Rng::gen(&mut rng);
+        let run_number = all_results.len() + 1;
+        eprintln!("======= Run {run_number}/{n} (seed={seed}) =======");
 
         let mut config = base_config.clone();
         config.training.seed = seed;
@@ -423,7 +427,7 @@ pub fn run_seed_test_continuous<W: Write>(
         trainer.train();
 
         let result = RunResult {
-            run_number: all_results.len() + 1,
+            run_number,
             seed,
             lambda: config.agent.actor.local_lambda,
             max_depth: trainer.current_depth(),
