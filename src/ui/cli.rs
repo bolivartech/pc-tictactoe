@@ -495,6 +495,9 @@ adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
 
+# TD(n): n-step returns (0 = standard TD(0), n > 0 = accumulate n steps)
+td_steps = 0
+
 # Continuous Learning (all disabled by default for backward compatibility)
 # M1 — Scale range: controls surprise-driven learning rate scaling
 scale_floor = 0.0              # 0.0 = true weight freeze when surprise is low

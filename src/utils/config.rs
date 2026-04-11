@@ -79,6 +79,11 @@ pub struct AgentSection {
     /// Entropy regularization coefficient.
     #[serde(default = "default_entropy_coeff")]
     pub entropy_coeff: f64,
+    // ─── TD(n) ─────────────────────────────────────────────────────────────
+    /// Number of steps for TD(n) return computation.
+    /// 0 = standard TD(0), n > 0 = accumulate n steps before bootstrapping.
+    #[serde(default)]
+    pub td_steps: usize,
     // ─── Continuous Learning (M1–M4) ───────────────────────────────────────
     /// Learning rate floor when surprise is low. 0.0 = true weight freeze.
     #[serde(default = "default_scale_floor")]
@@ -464,6 +469,7 @@ impl Default for AgentSection {
             adaptive_surprise: default_adaptive_surprise(),
             surprise_buffer_size: default_surprise_buffer_size(),
             entropy_coeff: default_entropy_coeff(),
+            td_steps: 0,
             scale_floor: default_scale_floor(),
             scale_ceil: default_scale_ceil(),
             actor_hysteresis: false,
@@ -818,6 +824,7 @@ impl AppConfig {
             adaptive_surprise: self.agent.adaptive_surprise,
             surprise_buffer_size: self.agent.surprise_buffer_size,
             entropy_coeff: self.agent.entropy_coeff,
+            td_steps: self.agent.td_steps,
             scale_floor: self.agent.scale_floor,
             scale_ceil: self.agent.scale_ceil,
             actor_hysteresis: self.agent.actor_hysteresis,
