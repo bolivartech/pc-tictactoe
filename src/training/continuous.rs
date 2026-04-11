@@ -113,8 +113,6 @@ impl ContinuousTrainer {
             let outcome = self.episode_outcome();
             self.metrics.record(outcome);
 
-            self.episode_count += 1;
-
             // Check curriculum advancement (only after window is full)
             let prev_depth = self.current_depth;
             let non_loss_rate = self.metrics.win_rate() + self.metrics.draw_rate();
@@ -126,6 +124,8 @@ impl ContinuousTrainer {
                 self.minimax = MinimaxPlayer::new(self.current_depth);
                 self.metrics.reset();
             }
+
+            self.episode_count += 1;
 
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
                 eprintln!(
@@ -313,7 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_alternates_sides() {
+    fn test_both_sides_complete_without_panic() {
+        // Runs 4 episodes: even episodes agent is Player::One, odd is Player::Two.
+        // Verifies both sides execute without panic.
         let mut trainer = make_continuous_trainer(4);
         trainer.train();
         assert_eq!(trainer.episode_count(), 4);
