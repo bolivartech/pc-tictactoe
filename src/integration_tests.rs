@@ -225,6 +225,107 @@ mod tests {
     }
 
     #[test]
+    fn test_champion_finder_e2e_generates_valid_file() {
+        use crate::training::champion::ChampionFinder;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let mut config = AppConfig::default();
+        config.training.episodes = 30;
+        config.continuous.max_episodes = 30;
+        config.training.log_interval = 0;
+        config.champion.n_iterations = 2;
+        config.champion.assessment_games_running = 3;
+        config.champion.assessment_games_final = 5;
+        config.champion.assessment_interval = 15;
+        config.champion.assessment_depth = 1;
+        let output = format!(
+            "{}/e2e_champion_{}.json",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
+        config.champion.output_path = output.clone();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut finder = ChampionFinder::new(config, stop);
+        let result = finder.find().unwrap();
+
+        assert_eq!(result.iterations.len(), 2);
+        assert!(std::path::Path::new(&output).exists());
+
+        // Champion should be loadable
+        let (_agent, _meta) =
+            pc_rl_core::serializer::load_agent(&output, pc_rl_core::CpuLinAlg::new()).unwrap();
+
+        let _ = std::fs::remove_file(&output);
+    }
+
+    #[test]
+    fn test_stress_test_e2e_generates_valid_csv() {
+        use crate::training::stress_test::StressTester;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        // First create a champion to load
+        let mut config = AppConfig::default();
+        config.training.log_interval = 0;
+        let agent_cfg = config.to_agent_config().unwrap();
+        let agent = pc_rl_core::pc_actor_critic::PcActorCritic::new(
+            pc_rl_core::CpuLinAlg::new(),
+            agent_cfg,
+            42,
+        )
+        .unwrap();
+        let champion_path = format!(
+            "{}/e2e_stress_champion_{}.json",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
+        pc_rl_core::serializer::save_agent(&agent, &champion_path, 0, None).unwrap();
+
+        let csv_path = format!(
+            "{}/e2e_stress_log_{}.csv",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
+        let post_path = format!(
+            "{}/e2e_stress_post_{}.json",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
+
+        let mut stress_config = config.stress_test.clone();
+        stress_config.champion_path = champion_path.clone();
+        stress_config.max_episodes = 20;
+        stress_config.assessment_interval = 10;
+        stress_config.assessment_games = 3;
+        stress_config.log_path = csv_path.clone();
+        stress_config.output_agent_path = post_path.clone();
+        stress_config.opponent_depth_min = 1;
+        stress_config.opponent_depth_max = 2;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut tester = StressTester::new(config, stress_config, stop).unwrap();
+        let result = tester.run().unwrap();
+
+        assert_eq!(result.total_episodes, 20);
+        assert!(std::path::Path::new(&csv_path).exists());
+        assert!(std::path::Path::new(&post_path).exists());
+
+        let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(csv_content.starts_with("episode,opponent_depths_seen,fitness"));
+        assert!(csv_content.contains("BASELINE"));
+
+        // Post-stress agent should be loadable
+        let (_a, _m) =
+            pc_rl_core::serializer::load_agent(&post_path, pc_rl_core::CpuLinAlg::new()).unwrap();
+
+        let _ = std::fs::remove_file(&champion_path);
+        let _ = std::fs::remove_file(&csv_path);
+        let _ = std::fs::remove_file(&post_path);
+    }
+
+    #[test]
     fn test_step_masked_completes_episode() {
         let mut agent = cl_agent_from_config();
         let mut env = TicTacToe::new();

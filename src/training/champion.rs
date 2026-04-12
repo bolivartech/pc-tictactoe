@@ -193,7 +193,11 @@ impl ChampionFinder {
                     champion_depth = peak_depth;
                     champion_iteration = iteration;
                     champion_seed = seed;
-                    fs::rename(&snapshot_path, &champion_cfg.output_path)?;
+                    // Use copy+delete to handle cross-device moves (e.g. C: temp → D: cwd).
+                    if fs::rename(&snapshot_path, &champion_cfg.output_path).is_err() {
+                        fs::copy(&snapshot_path, &champion_cfg.output_path)?;
+                        fs::remove_file(&snapshot_path)?;
+                    }
                     replaced = true;
                     eprintln!(
                         "  NEW CHAMPION: fitness={confirmed_fitness:.4} depth={peak_depth} saved to {}",
