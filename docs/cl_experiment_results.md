@@ -890,13 +890,47 @@ GAE(1.0) improves marginally over GAE(0.95) (mean 6.23 vs 6.00, confirming λ=1.
 
 ### Why GAE(1.0) ≠ TD(5) in practice
 
-Despite theoretical equivalence, the two produce different results due to implementation differences:
+**Correction to earlier analysis**: Both TD(n) and GAE(λ) perform full backpropagation through all 3 layers. The earlier claim that "GAE only updates the output layer" was incorrect. The real difference is much more subtle and is about **which activations are used during backprop**.
 
-1. **Signal propagation through layers**: TD(n) buffers complete transitions with `InferResult` caches, preserving activations across all 3 hidden layers. GAE uses eligibility traces **only at the output layer**, so the gradient signal must propagate back through the PC inference loop each update without the benefit of cached activations.
+#### The activation mismatch problem
 
-2. **Update timing**: TD(5) waits for the buffer to fill, then learns from the oldest transition using its cached state. GAE updates at every step with the accumulated trace. In 5-9 step episodes, this produces different gradient flows even when the mathematical target is the same.
+In `layer.backward()`, the weight update computes:
+```
+dW[i] = grad ⊗ hidden_states[i-1]^T
+```
 
-3. **Offensive bias amplification**: GAE(1.0) has the highest no-draw rate (37.1%) of all experiments. The trace accumulation may bias gradients toward early actions (where offense pays off as P1), producing agents that never learn P2 defense.
+Where `hidden_states[i-1]` are the activations from the previous layer at the moment of the forward pass that produced `grad`.
+
+**TD(5)** stores the complete `InferResult` (hidden_states, prediction_errors, tanh_components) at the moment the action was taken. When it learns 5 steps later, the backprop uses **those original activations** — the outer product `dW` is exact for that transition. The buffer cost `O(n × network_size)` is precisely the price paid for this accuracy.
+
+**GAE(λ)** accumulates a trace only at the output delta level. When it updates at each step, the backprop uses `hidden_states` from the **current** state (freshly computed). But the `trace` contains gradient components from **previous** states — there is a temporal mismatch. The outer product `grad × input_current` is incorrect because `grad` was computed in a context where `input` was different.
+
+#### Why depth amplifies the problem
+
+- **1-layer networks**: `input_to_layer` is the raw observation — no mismatch grows through depth, and the difference is minimal.
+- **3-layer networks**: intermediate `hidden_states[i]` depend on weights from earlier layers, which have been changing. The mismatch is compounded — today's intermediate activations reflect today's weights, but the trace reflects yesterday's gradients computed with yesterday's weights.
+
+Each layer propagates the trace-scaled delta through activations that do NOT correspond to the states where the trace was accumulated. The gradient signal gets distorted at each layer transition.
+
+#### The offensive bias mechanism
+
+The 37.1% no-draw rate in GAE(1.0) is explained by this mismatch interacting with the P1/P2 alternation:
+
+1. Even-indexed moves (0, 2, 4) are offensive (as P1), odd-indexed (1, 3) are defensive (as P2)
+2. The trace accumulates gradients from both, with temporal decay
+3. During backprop, each layer propagates the mixed trace through activations from the current state only
+4. The signal from earlier moves (offensive) gets distorted one way, the signal from recent moves (defensive) gets distorted another way
+5. Because offense produces wins more directly than defense produces draws, the offensive component of the trace dominates the learned update, and the agent specializes in offense
+
+#### The correct solution (out of scope)
+
+**Per-weight eligibility traces** would maintain a separate trace for each weight matrix (or per-layer gradient), not just at the output delta. This requires refactoring `Layer::backward()` in pc-rl-core to separate "compute gradient" from "apply update", so that traces can accumulate at the full-gradient level per layer. This is an invasive change in the library and is NOT part of this project's scope.
+
+### Implications by domain
+
+- **TicTacToe (3-layer PC)**: TD(5) is strictly better due to exact activation reuse. Confirmed empirically.
+- **1-layer networks**: GAE(λ) should match TD(n) more closely since the mismatch is minimal.
+- **Long-episode domains with large networks** (Qubic, Connect 4): TD(n) buffer cost grows linearly with n. If episodes exceed hundreds of steps, TD(n) becomes impractical and GAE is the only option — but the activation mismatch will limit accuracy. The proper solution there would be per-weight eligibility traces in pc-rl-core.
 
 ### Conclusion (Experiment 9)
 
