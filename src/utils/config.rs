@@ -53,6 +53,9 @@ pub struct AppConfig {
     /// Champion search configuration.
     #[serde(default)]
     pub champion: ChampionSection,
+    /// Stress test configuration.
+    #[serde(default)]
+    pub stress_test: StressTestSection,
 }
 
 /// Agent architecture: actor, critic, and shared hyperparameters.
@@ -354,6 +357,63 @@ impl Default for ChampionSection {
     }
 }
 
+/// Stress test configuration for the `stress-test` command.
+///
+/// Controls the champion model path, opponent depth range, episode budget,
+/// assessment schedule, and output paths for the drift log and saved agent.
+///
+/// # Examples
+///
+/// ```
+/// use pc_tictactoe::utils::config::StressTestSection;
+///
+/// let cfg = StressTestSection::default();
+/// assert_eq!(cfg.champion_path, "champion.json");
+/// assert_eq!(cfg.opponent_depth_min, 1);
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct StressTestSection {
+    /// Path to the champion model to load.
+    #[serde(default = "default_stress_champion_path")]
+    pub champion_path: String,
+    /// Minimum opponent depth (inclusive). Must be in [1, 9].
+    #[serde(default = "default_stress_opponent_depth_min")]
+    pub opponent_depth_min: usize,
+    /// Maximum opponent depth (inclusive). Must be in [1, 9].
+    #[serde(default = "default_stress_opponent_depth_max")]
+    pub opponent_depth_max: usize,
+    /// Maximum episodes to run. 0 = unlimited (until Ctrl+C).
+    #[serde(default = "default_stress_max_episodes")]
+    pub max_episodes: usize,
+    /// Episodes between scoring rounds.
+    #[serde(default = "default_stress_assessment_interval")]
+    pub assessment_interval: usize,
+    /// Games per scoring round. Must be > 0.
+    #[serde(default = "default_stress_assessment_games")]
+    pub assessment_games: usize,
+    /// Path for the CSV drift log output. Must be non-empty.
+    #[serde(default = "default_stress_log_path")]
+    pub log_path: String,
+    /// Path for saving the agent after the stress test. Must be non-empty.
+    #[serde(default = "default_stress_output_agent_path")]
+    pub output_agent_path: String,
+}
+
+impl Default for StressTestSection {
+    fn default() -> Self {
+        Self {
+            champion_path: default_stress_champion_path(),
+            opponent_depth_min: default_stress_opponent_depth_min(),
+            opponent_depth_max: default_stress_opponent_depth_max(),
+            max_episodes: default_stress_max_episodes(),
+            assessment_interval: default_stress_assessment_interval(),
+            assessment_games: default_stress_assessment_games(),
+            log_path: default_stress_log_path(),
+            output_agent_path: default_stress_output_agent_path(),
+        }
+    }
+}
+
 /// Logger configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoggerSection {
@@ -537,6 +597,30 @@ fn default_fisher_decay() -> f64 {
 }
 fn default_fisher_ema_beta() -> f64 {
     0.99
+}
+fn default_stress_champion_path() -> String {
+    "champion.json".to_string()
+}
+fn default_stress_opponent_depth_min() -> usize {
+    1
+}
+fn default_stress_opponent_depth_max() -> usize {
+    9
+}
+fn default_stress_max_episodes() -> usize {
+    100_000
+}
+fn default_stress_assessment_interval() -> usize {
+    1000
+}
+fn default_stress_assessment_games() -> usize {
+    200
+}
+fn default_stress_log_path() -> String {
+    "stress_test.csv".to_string()
+}
+fn default_stress_output_agent_path() -> String {
+    "champion_post_stress.json".to_string()
 }
 
 fn default_actor_hidden() -> Vec<HiddenLayerDef> {
@@ -757,6 +841,7 @@ impl AppConfig {
         }
         self.validate_cl()?;
         self.validate_champion()?;
+        self.validate_stress_test()?;
         Ok(())
     }
 
@@ -943,6 +1028,64 @@ impl AppConfig {
         if c.output_path.is_empty() {
             return Err(ConfigError {
                 message: "champion.output_path must be non-empty".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Validates stress test configuration fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConfigError`] for any of:
+    /// - `opponent_depth_min` or `opponent_depth_max` outside `[1, 9]`
+    /// - `opponent_depth_min > opponent_depth_max`
+    /// - `assessment_games == 0`
+    /// - `champion_path`, `log_path`, or `output_agent_path` is empty
+    fn validate_stress_test(&self) -> Result<(), ConfigError> {
+        let s = &self.stress_test;
+        if s.opponent_depth_min < 1 || s.opponent_depth_min > 9 {
+            return Err(ConfigError {
+                message: format!(
+                    "stress_test.opponent_depth_min ({}) must be in [1, 9]",
+                    s.opponent_depth_min
+                ),
+            });
+        }
+        if s.opponent_depth_max < 1 || s.opponent_depth_max > 9 {
+            return Err(ConfigError {
+                message: format!(
+                    "stress_test.opponent_depth_max ({}) must be in [1, 9]",
+                    s.opponent_depth_max
+                ),
+            });
+        }
+        if s.opponent_depth_min > s.opponent_depth_max {
+            return Err(ConfigError {
+                message: format!(
+                    "stress_test.opponent_depth_min ({}) > opponent_depth_max ({})",
+                    s.opponent_depth_min, s.opponent_depth_max
+                ),
+            });
+        }
+        if s.assessment_games == 0 {
+            return Err(ConfigError {
+                message: "stress_test.assessment_games must be > 0".to_string(),
+            });
+        }
+        if s.champion_path.is_empty() {
+            return Err(ConfigError {
+                message: "stress_test.champion_path must be non-empty".to_string(),
+            });
+        }
+        if s.log_path.is_empty() {
+            return Err(ConfigError {
+                message: "stress_test.log_path must be non-empty".to_string(),
+            });
+        }
+        if s.output_agent_path.is_empty() {
+            return Err(ConfigError {
+                message: "stress_test.output_agent_path must be non-empty".to_string(),
             });
         }
         Ok(())
@@ -1457,5 +1600,51 @@ min_depth_filter = 6
         let mut config = AppConfig::default();
         config.champion.output_path = String::new();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_stress_test_section_default_values() {
+        let cfg = StressTestSection::default();
+        assert_eq!(cfg.champion_path, "champion.json");
+        assert_eq!(cfg.opponent_depth_min, 1);
+        assert_eq!(cfg.opponent_depth_max, 9);
+        assert_eq!(cfg.max_episodes, 100_000);
+        assert_eq!(cfg.assessment_interval, 1000);
+        assert_eq!(cfg.assessment_games, 200);
+        assert_eq!(cfg.log_path, "stress_test.csv");
+        assert_eq!(cfg.output_agent_path, "champion_post_stress.json");
+    }
+
+    #[test]
+    fn test_stress_validation_rejects_min_above_max() {
+        let mut config = AppConfig::default();
+        config.stress_test.opponent_depth_min = 5;
+        config.stress_test.opponent_depth_max = 3;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_stress_validation_rejects_depth_out_of_range() {
+        let mut config = AppConfig::default();
+        config.stress_test.opponent_depth_min = 0;
+        assert!(config.validate().is_err());
+
+        config.stress_test.opponent_depth_min = 1;
+        config.stress_test.opponent_depth_max = 10;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_stress_validation_rejects_zero_assessment_games() {
+        let mut config = AppConfig::default();
+        config.stress_test.assessment_games = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_stress_allows_zero_max_episodes_for_unlimited() {
+        let mut config = AppConfig::default();
+        config.stress_test.max_episodes = 0; // Unlimited
+        assert!(config.validate().is_ok());
     }
 }
