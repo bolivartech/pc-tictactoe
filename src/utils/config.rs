@@ -1056,6 +1056,7 @@ impl AppConfig {
     /// - `opponent_depth_min > opponent_depth_max`
     /// - `assessment_games == 0`
     /// - `champion_path`, `log_path`, or `output_agent_path` is empty
+    /// - `output_agent_path == champion_path` (would clobber the input champion)
     fn validate_stress_test(&self) -> Result<(), ConfigError> {
         let s = &self.stress_test;
         if s.opponent_depth_min < 1 || s.opponent_depth_min > 9 {
@@ -1105,6 +1106,13 @@ impl AppConfig {
         if s.output_agent_path.is_empty() {
             return Err(ConfigError {
                 message: "stress_test.output_agent_path must be non-empty".to_string(),
+            });
+        }
+        if self.stress_test.champion_path == self.stress_test.output_agent_path {
+            return Err(ConfigError {
+                message: "stress_test.output_agent_path must differ from champion_path \
+                          (the stress test must not overwrite its input champion)"
+                    .to_string(),
             });
         }
         Ok(())
@@ -1672,5 +1680,14 @@ min_depth_filter = 6
         let mut config = AppConfig::default();
         config.stress_test.max_episodes = 0; // Unlimited
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_stress_validation_rejects_same_champion_and_output_paths() {
+        let mut config = AppConfig::default();
+        let path = "same_path.json".to_string();
+        config.stress_test.champion_path = path.clone();
+        config.stress_test.output_agent_path = path;
+        assert!(config.validate().is_err());
     }
 }
