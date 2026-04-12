@@ -317,6 +317,56 @@ impl ContinuousTrainer {
     pub fn agent(&self) -> &PcActorCritic {
         &self.agent
     }
+
+    /// Returns `true` when training should stop.
+    ///
+    /// Stops when either the stop flag is set or the episode count has
+    /// reached `max_episodes`. Callers driving external loops (e.g.
+    /// `ChampionFinder`) should check this before each iteration.
+    #[must_use]
+    pub fn should_stop(&self) -> bool {
+        self.stop_flag.load(Ordering::Acquire) || self.episode_count >= self.max_episodes
+    }
+
+    /// Runs a single episode and records its outcome.
+    ///
+    /// Increments `episode_count`, records the episode outcome in the
+    /// metrics tracker, and checks curriculum advancement using the same
+    /// logic as [`Self::train()`]. Does **not** check the stop flag,
+    /// print progress, or emit log lines — callers are responsible for
+    /// those concerns.
+    ///
+    /// # Contract
+    ///
+    /// After this call `episode_count` is exactly one greater than before.
+    /// Curriculum depth may have advanced if the advancement criterion was met.
+    pub fn run_single_episode_pub(&mut self) {
+        self.run_episode();
+
+        let outcome = self.episode_outcome();
+        self.metrics.record(outcome);
+
+        let non_loss_rate = self.metrics.win_rate() + self.metrics.draw_rate();
+        if self.metrics.count() >= self.metrics.window_size()
+            && non_loss_rate > self.advance_threshold
+            && self.current_depth < 9
+        {
+            self.current_depth += 1;
+            self.minimax = MinimaxPlayer::new(self.current_depth);
+            self.metrics.reset();
+        }
+
+        self.episode_count += 1;
+    }
+
+    /// Returns a mutable reference to the agent.
+    ///
+    /// Used by external scorers (e.g. `ChampionFinder::score_vs_minimax`)
+    /// that need to call `act()` without modifying trainer state.
+    #[must_use]
+    pub fn agent_mut(&mut self) -> &mut PcActorCritic {
+        &mut self.agent
+    }
 }
 
 #[cfg(test)]
@@ -401,5 +451,39 @@ mod tests {
         let mut trainer = make_continuous_trainer(4);
         trainer.train();
         assert_eq!(trainer.episode_count(), 4);
+    }
+
+    #[test]
+    fn test_should_stop_false_initially() {
+        let trainer = make_continuous_trainer(100);
+        assert!(!trainer.should_stop());
+    }
+
+    #[test]
+    fn test_should_stop_true_after_stop_flag() {
+        let mut config = AppConfig::default();
+        config.continuous.max_episodes = 100;
+        let agent_config = config.to_agent_config().unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let trainer = ContinuousTrainer::new(agent, &config, stop.clone());
+        stop.store(true, Ordering::SeqCst);
+        assert!(trainer.should_stop());
+    }
+
+    #[test]
+    fn test_run_single_episode_pub_increments_count() {
+        let mut trainer = make_continuous_trainer(100);
+        assert_eq!(trainer.episode_count(), 0);
+        trainer.run_single_episode_pub();
+        assert_eq!(trainer.episode_count(), 1);
+    }
+
+    #[test]
+    fn test_agent_mut_returns_same_agent() {
+        let mut trainer = make_continuous_trainer(100);
+        let ptr1 = trainer.agent() as *const _;
+        let ptr2 = trainer.agent_mut() as *const _;
+        assert_eq!(ptr1, ptr2);
     }
 }
