@@ -6,7 +6,9 @@
 //!
 //! - [`trainer`] — Episode-based training with curriculum learning.
 //! - [`continuous`] — Continuous training with surprise-based immediate updates.
+//! - [`fitness`] — GA-compatible fitness scoring for trained agents.
 
 pub mod continuous;
 pub mod experiment;
+pub mod fitness;
 pub mod trainer;
