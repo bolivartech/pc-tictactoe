@@ -27,8 +27,15 @@ use crate::utils::metrics::{GameOutcome, Metrics};
 /// Threshold for delta classification: deltas within this range are `Stable`.
 const STATUS_DELTA_THRESHOLD: f64 = 0.01;
 
+/// Minimax depth used for scoring during stress test.
+///
+/// Fixed at 9 (perfect play) so that drift measurements are anchored to
+/// the strongest possible opponent — this lets the CSV's fitness column
+/// be compared across runs even when `opponent_depth_max` differs.
+const STRESS_SCORING_DEPTH: usize = 9;
+
 /// CSV header for the stress test log file.
-const CSV_HEADER: &str = "episode,opponent_depths_seen,fitness,win_rate,draw_rate,loss_rate,delta_vs_baseline,delta_vs_previous,status,actor_state,actor_fast,actor_slow,critic_state,critic_fast,critic_slow,cl_transitions";
+const CSV_HEADER: &str = "episode,opponent_depths_seen,fitness,win_rate,draw_rate,loss_rate,delta_vs_baseline,delta_vs_previous,status,actor_state,actor_fast,actor_slow,critic_state,critic_fast,critic_slow,hysteresis_transitions";
 
 /// Classification of a single scoring checkpoint vs the previous one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,8 +115,8 @@ pub struct StressLogEntry {
     pub critic_fast: f64,
     /// Critic slow EWMA value.
     pub critic_slow: f64,
-    /// Cumulative CL state transitions (actor + critic) since run start.
-    pub cl_transitions: u64,
+    /// Cumulative actor+critic hysteresis FROZEN↔PLASTIC transitions (M2 only).
+    pub hysteresis_transitions: u64,
 }
 
 /// Final summary of a stress test run.
@@ -159,6 +166,10 @@ pub fn format_depth_histogram(histogram: &BTreeMap<usize, u64>) -> String {
 /// and periodically evaluates fitness against minimax depth-9 to detect drift.
 /// All measurements are appended to a CSV log file.
 ///
+/// Episodes alternate the agent between Player::One and Player::Two (matching
+/// score_vs_minimax) so that drift measurements are not contaminated by an
+/// untrained side policy.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -174,13 +185,10 @@ pub fn format_depth_histogram(histogram: &BTreeMap<usize, u64>) -> String {
 /// ```
 pub struct StressTester {
     agent: PcActorCritic,
-    /// Retained for potential future use (e.g. curriculum depth cap).
-    #[allow(dead_code)]
-    base_config: AppConfig,
     stress_config: StressTestSection,
     stop_flag: Arc<AtomicBool>,
     depth_histogram: BTreeMap<usize, u64>,
-    cl_transitions: u64,
+    hysteresis_transitions: u64,
     prev_actor_state: PlasticityState,
     prev_critic_state: PlasticityState,
     metrics: Metrics,
@@ -206,11 +214,10 @@ impl StressTester {
         let metrics = Metrics::new(base_config.curriculum.window_size);
         Ok(Self {
             agent,
-            base_config,
             stress_config,
             stop_flag,
             depth_histogram: BTreeMap::new(),
-            cl_transitions: 0,
+            hysteresis_transitions: 0,
             prev_actor_state: PlasticityState::Plastic,
             prev_critic_state: PlasticityState::Plastic,
             metrics,
@@ -231,9 +238,12 @@ impl StressTester {
         writeln!(writer, "{CSV_HEADER}")?;
 
         // Baseline scoring
-        let (bw, bd, bl) =
-            score_vs_minimax(&mut self.agent, 9, self.stress_config.assessment_games);
-        let baseline_fitness = Fitness::from_scores(bw, bd, 9).combined();
+        let (bw, bd, bl) = score_vs_minimax(
+            &mut self.agent,
+            STRESS_SCORING_DEPTH,
+            self.stress_config.assessment_games,
+        );
+        let baseline_fitness = Fitness::from_scores(bw, bd, STRESS_SCORING_DEPTH).combined();
         let mut prev_fitness = baseline_fitness;
         let mut max_fitness = baseline_fitness;
         let mut min_fitness = baseline_fitness;
@@ -263,7 +273,7 @@ impl StressTester {
             critic_state: c_state,
             critic_fast: c_fast,
             critic_slow: c_slow,
-            cl_transitions: 0,
+            hysteresis_transitions: 0,
         };
         let mut history = vec![baseline_entry.clone()];
         Self::write_csv_row(&mut writer, &baseline_entry)?;
@@ -272,7 +282,6 @@ impl StressTester {
 
         let mut rng = rand::thread_rng();
         let mut episode: u64 = 0;
-        let agent_side_env = Player::One;
 
         while !self.stop_flag.load(Ordering::Acquire) {
             let opp_depth = rng.gen_range(
@@ -280,21 +289,29 @@ impl StressTester {
             );
             *self.depth_histogram.entry(opp_depth).or_insert(0) += 1;
 
+            // Alternate sides per episode: even episodes → P1, odd → P2.
+            // Matches the side distribution used by score_vs_minimax so that
+            // training and evaluation see the same policy coverage.
+            let agent_side = if episode.is_multiple_of(2) {
+                Player::One
+            } else {
+                Player::Two
+            };
             let mut minimax = MinimaxPlayer::new(opp_depth);
-            self.run_stress_episode(&mut minimax, agent_side_env);
+            self.run_stress_episode(&mut minimax, agent_side);
 
             episode += 1;
 
-            // Track CL transitions
+            // Track hysteresis transitions (M2 only)
             let (a_state, _, _, c_state, _, _) = Self::capture_cl_state(&self.agent);
             let new_actor = Self::char_to_state(a_state);
             let new_critic = Self::char_to_state(c_state);
             if new_actor != self.prev_actor_state {
-                self.cl_transitions += 1;
+                self.hysteresis_transitions += 1;
                 self.prev_actor_state = new_actor;
             }
             if new_critic != self.prev_critic_state {
-                self.cl_transitions += 1;
+                self.hysteresis_transitions += 1;
                 self.prev_critic_state = new_critic;
             }
 
@@ -373,8 +390,12 @@ impl StressTester {
         baseline_fitness: f64,
         prev_fitness: f64,
     ) -> Result<StressLogEntry, Box<dyn Error>> {
-        let (w, d, l) = score_vs_minimax(&mut self.agent, 9, self.stress_config.assessment_games);
-        let fitness = Fitness::from_scores(w, d, 9).combined();
+        let (w, d, l) = score_vs_minimax(
+            &mut self.agent,
+            STRESS_SCORING_DEPTH,
+            self.stress_config.assessment_games,
+        );
+        let fitness = Fitness::from_scores(w, d, STRESS_SCORING_DEPTH).combined();
         let delta_baseline = fitness - baseline_fitness;
         let delta_prev = fitness - prev_fitness;
         let status = classify_status(delta_prev);
@@ -396,7 +417,7 @@ impl StressTester {
             critic_state: c_state,
             critic_fast: c_fast,
             critic_slow: c_slow,
-            cl_transitions: self.cl_transitions,
+            hysteresis_transitions: self.hysteresis_transitions,
         })
     }
 
@@ -522,7 +543,7 @@ impl StressTester {
             csch = entry.critic_state,
             cf = entry.critic_fast,
             csl = entry.critic_slow,
-            tr = entry.cl_transitions
+            tr = entry.hysteresis_transitions
         )?;
         Ok(())
     }
@@ -542,7 +563,7 @@ impl StressTester {
             csch = entry.critic_state,
             cf = entry.critic_fast,
             csl = entry.critic_slow,
-            tr = entry.cl_transitions
+            tr = entry.hysteresis_transitions
         );
     }
 }
@@ -578,7 +599,7 @@ mod tests {
     #[test]
     fn test_csv_header_matches_spec() {
         assert!(CSV_HEADER.starts_with("episode,opponent_depths_seen,fitness"));
-        assert!(CSV_HEADER.ends_with("cl_transitions"));
+        assert!(CSV_HEADER.ends_with("hysteresis_transitions"));
         // 16 columns total
         assert_eq!(CSV_HEADER.split(',').count(), 16);
     }
