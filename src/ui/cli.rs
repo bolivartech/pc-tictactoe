@@ -57,6 +57,10 @@ pub enum Command {
     Init(InitArgs),
     /// Test a fixed config across N random seeds for statistical stability.
     SeedTest(SeedTestArgs),
+    /// Search for the best champion across N training sessions.
+    FindChampion(FindChampionArgs),
+    /// Stress-test a champion against random-depth opponents.
+    StressTest(StressTestArgs),
 }
 
 /// Arguments for the train subcommand.
@@ -170,6 +174,31 @@ pub struct BenchmarkArgs {
     /// Number of training episodes for the benchmark.
     #[arg(long, short, default_value = "100")]
     pub episodes: usize,
+}
+
+/// Arguments for the find-champion subcommand.
+#[derive(Parser)]
+pub struct FindChampionArgs {
+    /// Path to TOML configuration file.
+    #[arg(long, short, default_value = "config_champion.toml")]
+    pub config: String,
+    /// Override n_iterations from config.
+    #[arg(long)]
+    pub iterations: Option<usize>,
+}
+
+/// Arguments for the stress-test subcommand.
+#[derive(Parser)]
+pub struct StressTestArgs {
+    /// Path to TOML configuration file.
+    #[arg(long, short, default_value = "config_stress.toml")]
+    pub config: String,
+    /// Override champion_path from config.
+    #[arg(long)]
+    pub champion: Option<String>,
+    /// Override max_episodes from config.
+    #[arg(long)]
+    pub max_episodes: Option<usize>,
 }
 
 /// Runs the train subcommand.
@@ -730,6 +759,111 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// Runs the find-champion subcommand.
+///
+/// Loads config, runs N independent training sessions, and reports the
+/// best champion found (highest fitness score).
+///
+/// # Arguments
+///
+/// * `args` - Find-champion arguments from CLI.
+///
+/// # Errors
+///
+/// Returns an error if config loading, training, or I/O fails.
+pub fn run_find_champion(args: FindChampionArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::training::champion::ChampionFinder;
+
+    let mut config = AppConfig::load(Path::new(&args.config))?;
+
+    if let Some(n) = args.iterations {
+        config.champion.n_iterations = n;
+    }
+
+    config.validate()?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = stop_flag.clone();
+    let _ = ctrlc::set_handler(move || {
+        flag.store(true, Ordering::SeqCst);
+    });
+
+    let mut finder = ChampionFinder::new(config, stop_flag);
+    let result = finder.find()?;
+
+    println!();
+    println!("=== Champion Found ===");
+    if result.champion_iteration == 0 {
+        println!("No champion found (no iterations completed).");
+    } else {
+        println!("Fitness:   {:.4}", result.champion_fitness);
+        println!("Depth:     {}", result.champion_depth);
+        println!(
+            "Iteration: {}/{}",
+            result.champion_iteration,
+            result.iterations.len()
+        );
+        println!("Seed:      {}", result.champion_seed);
+    }
+    println!("Iterations run: {}", result.iterations.len());
+
+    Ok(())
+}
+
+/// Runs the stress-test subcommand.
+///
+/// Loads a champion model and subjects it to continuous training against
+/// random-depth opponents, reporting fitness drift statistics.
+///
+/// # Arguments
+///
+/// * `args` - Stress-test arguments from CLI.
+///
+/// # Errors
+///
+/// Returns an error if config loading, champion loading, training, or I/O fails.
+pub fn run_stress_test(args: StressTestArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::training::stress_test::StressTester;
+
+    let mut config = AppConfig::load(Path::new(&args.config))?;
+
+    if let Some(path) = args.champion {
+        config.stress_test.champion_path = path;
+    }
+    if let Some(m) = args.max_episodes {
+        config.stress_test.max_episodes = m;
+    }
+
+    config.validate()?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = stop_flag.clone();
+    let _ = ctrlc::set_handler(move || {
+        flag.store(true, Ordering::SeqCst);
+    });
+
+    let stress_cfg = config.stress_test.clone();
+    let mut tester = StressTester::new(config, stress_cfg, stop_flag)?;
+    let result = tester.run()?;
+
+    println!();
+    println!("=== Stress Test Summary ===");
+    println!("Episodes run:     {}", result.total_episodes);
+    println!("Baseline fitness: {:.4}", result.baseline_fitness);
+    println!(
+        "Final fitness:    {:.4} ({:+.4})",
+        result.final_fitness,
+        result.final_fitness - result.baseline_fitness
+    );
+    println!("Max fitness:      {:.4}", result.max_fitness);
+    println!("Min fitness:      {:.4}", result.min_fitness);
+    println!("Improvements:     {}", result.improvements);
+    println!("Stable:           {}", result.stable);
+    println!("Degradations:     {}", result.degradations);
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,6 +886,28 @@ mod tests {
         assert!(subs.contains(&"evaluate"));
         assert!(subs.contains(&"benchmark"));
         assert!(subs.contains(&"init"));
+    }
+
+    #[test]
+    fn test_find_champion_subcommand_parses() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let subs: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
+        assert!(
+            subs.contains(&"find-champion"),
+            "Expected find-champion subcommand, got: {subs:?}"
+        );
+    }
+
+    #[test]
+    fn test_stress_test_subcommand_parses() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let subs: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
+        assert!(
+            subs.contains(&"stress-test"),
+            "Expected stress-test subcommand, got: {subs:?}"
+        );
     }
 
     #[test]
