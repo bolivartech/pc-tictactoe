@@ -1068,6 +1068,11 @@ impl AppConfig {
                 ),
             });
         }
+        if s.assessment_interval == 0 {
+            return Err(ConfigError {
+                message: "stress_test.assessment_interval must be > 0".to_string(),
+            });
+        }
         if s.assessment_games == 0 {
             return Err(ConfigError {
                 message: "stress_test.assessment_games must be > 0".to_string(),
@@ -1638,6 +1643,13 @@ min_depth_filter = 6
     fn test_stress_validation_rejects_zero_assessment_games() {
         let mut config = AppConfig::default();
         config.stress_test.assessment_games = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_stress_validation_rejects_zero_interval() {
+        let mut config = AppConfig::default();
+        config.stress_test.assessment_interval = 0;
         assert!(config.validate().is_err());
     }
 
