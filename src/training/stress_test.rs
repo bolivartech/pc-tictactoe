@@ -484,9 +484,9 @@ impl StressTester {
         let terminal_reward = env.reward(agent_side);
         let final_state = env.board_as_f64(agent_side);
         let final_valid: Vec<usize> = (0..9).collect();
-        let _ = self
-            .agent
-            .step_masked(&final_state, &final_valid, terminal_reward, true);
+        self.agent
+            .step_masked(&final_state, &final_valid, terminal_reward, true)
+            .expect("terminal step_masked failed during stress test");
 
         let outcome = match env.result() {
             GameResult::Win(p) if p == agent_side => GameOutcome::Win,
