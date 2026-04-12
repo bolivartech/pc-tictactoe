@@ -7,6 +7,7 @@
 
 use std::error::Error;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -135,13 +136,18 @@ impl ChampionFinder {
             let mut peak_fitness = 0.0_f64;
             let mut peak_depth = 1_usize;
             let mut has_snapshot = false;
-            // Use the output path stem to avoid collisions when multiple
-            // ChampionFinder instances run in parallel (e.g., during tests).
-            let output_stem = std::path::Path::new(&champion_cfg.output_path)
+            // Write the snapshot into the same directory as output_path to
+            // avoid leaving orphan files in CWD when tests redirect output_path
+            // to a temp directory.
+            let output_path_ref = Path::new(&champion_cfg.output_path);
+            let output_dir = output_path_ref.parent().unwrap_or_else(|| Path::new("."));
+            let output_stem = output_path_ref
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("champion");
-            let snapshot_path = format!("tmp_{output_stem}_peak_{iteration}.json");
+            let snapshot_path: PathBuf =
+                output_dir.join(format!("tmp_{output_stem}_peak_{iteration}.json"));
+            let snapshot_path = snapshot_path.to_string_lossy().to_string();
 
             while !trainer.should_stop() {
                 trainer.run_single_episode_pub();
