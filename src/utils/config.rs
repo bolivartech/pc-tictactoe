@@ -50,6 +50,9 @@ pub struct AppConfig {
     /// Logger configuration.
     #[serde(default)]
     pub logger: LoggerSection,
+    /// Champion search configuration.
+    #[serde(default)]
+    pub champion: ChampionSection,
 }
 
 /// Agent architecture: actor, critic, and shared hyperparameters.
@@ -289,6 +292,85 @@ pub struct ContinuousSection {
     /// Use random side assignment instead of alternating.
     #[serde(default)]
     pub random_side: bool,
+}
+
+/// Champion search configuration for the `find-champion` command.
+///
+/// Controls how many training sessions are run, how the best model is scored,
+/// and where the winning checkpoint is written.
+///
+/// # Examples
+///
+/// ```
+/// use pc_tictactoe::utils::config::ChampionSection;
+///
+/// let cfg = ChampionSection::default();
+/// assert_eq!(cfg.n_iterations, 50);
+/// assert_eq!(cfg.assessment_depth, 9);
+/// ```
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct ChampionSection {
+    /// Number of independent training sessions to run.
+    /// Each session trains a fresh agent; the best-scoring one is kept.
+    #[serde(default = "default_champion_n_iterations")]
+    pub n_iterations: usize,
+    /// Minimax opponent depth used for fitness scoring (1–9).
+    /// Higher = harder opponent; 9 = perfect play.
+    #[serde(default = "default_champion_assessment_depth")]
+    pub assessment_depth: usize,
+    /// Number of games per intra-session scoring round (cheap, during training).
+    /// Lower values allow more frequent checks with less overhead.
+    #[serde(default = "default_champion_games_running")]
+    pub assessment_games_running: usize,
+    /// Number of games for the final confirmation scoring at session end.
+    /// Higher values give a more precise win-rate estimate.
+    #[serde(default = "default_champion_games_final")]
+    pub assessment_games_final: usize,
+    /// Episodes between running-scoring rounds during a session.
+    /// 0 would disable intra-session scoring (rejected by validation).
+    #[serde(default = "default_champion_assessment_interval")]
+    pub assessment_interval: usize,
+    /// File path where the champion model is saved.
+    /// Must be non-empty.
+    #[serde(default = "default_champion_output_path")]
+    pub output_path: String,
+    /// Skip final scoring if the session's max curriculum depth is below this
+    /// value.  0 = no filter (always score every session).
+    #[serde(default)]
+    pub min_depth_filter: usize,
+}
+
+fn default_champion_n_iterations() -> usize {
+    50
+}
+fn default_champion_assessment_depth() -> usize {
+    9
+}
+fn default_champion_games_running() -> usize {
+    50
+}
+fn default_champion_games_final() -> usize {
+    500
+}
+fn default_champion_assessment_interval() -> usize {
+    1000
+}
+fn default_champion_output_path() -> String {
+    "champion.json".to_string()
+}
+
+impl Default for ChampionSection {
+    fn default() -> Self {
+        Self {
+            n_iterations: default_champion_n_iterations(),
+            assessment_depth: default_champion_assessment_depth(),
+            assessment_games_running: default_champion_games_running(),
+            assessment_games_final: default_champion_games_final(),
+            assessment_interval: default_champion_assessment_interval(),
+            output_path: default_champion_output_path(),
+            min_depth_filter: 0,
+        }
+    }
 }
 
 /// Logger configuration.
@@ -675,6 +757,7 @@ impl AppConfig {
             });
         }
         self.validate_cl()?;
+        self.validate_champion()?;
         Ok(())
     }
 
@@ -814,6 +897,55 @@ impl AppConfig {
             });
         }
 
+        Ok(())
+    }
+
+    /// Validates champion search configuration fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConfigError`] for any of:
+    /// - `n_iterations == 0`
+    /// - `assessment_depth` outside `[1, 9]`
+    /// - `assessment_games_running == 0`
+    /// - `assessment_games_final == 0`
+    /// - `assessment_interval == 0`
+    /// - `output_path` is empty
+    fn validate_champion(&self) -> Result<(), ConfigError> {
+        let c = &self.champion;
+        if c.n_iterations == 0 {
+            return Err(ConfigError {
+                message: "champion.n_iterations must be > 0".to_string(),
+            });
+        }
+        if c.assessment_depth < 1 || c.assessment_depth > 9 {
+            return Err(ConfigError {
+                message: format!(
+                    "champion.assessment_depth ({}) must be in [1, 9]",
+                    c.assessment_depth
+                ),
+            });
+        }
+        if c.assessment_games_running == 0 {
+            return Err(ConfigError {
+                message: "champion.assessment_games_running must be > 0".to_string(),
+            });
+        }
+        if c.assessment_games_final == 0 {
+            return Err(ConfigError {
+                message: "champion.assessment_games_final must be > 0".to_string(),
+            });
+        }
+        if c.assessment_interval == 0 {
+            return Err(ConfigError {
+                message: "champion.assessment_interval must be > 0".to_string(),
+            });
+        }
+        if c.output_path.is_empty() {
+            return Err(ConfigError {
+                message: "champion.output_path must be non-empty".to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -1233,5 +1365,72 @@ episodes = 5000
         config.agent.actor_fast_window = 200;
         config.agent.actor_slow_window = 10;
         assert!(config.validate().is_ok());
+    }
+
+    // ─── ChampionSection tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_champion_section_default_values() {
+        let cfg = ChampionSection::default();
+        assert_eq!(cfg.n_iterations, 50);
+        assert_eq!(cfg.assessment_depth, 9);
+        assert_eq!(cfg.assessment_games_running, 50);
+        assert_eq!(cfg.assessment_games_final, 500);
+        assert_eq!(cfg.assessment_interval, 1000);
+        assert_eq!(cfg.output_path, "champion.json");
+        assert_eq!(cfg.min_depth_filter, 0);
+    }
+
+    #[test]
+    fn test_champion_section_parses_from_toml() {
+        let toml_str = r#"
+[agent]
+[agent.actor]
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "tanh"
+[agent.critic]
+input_size = 27
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "tanh"
+[training]
+[champion]
+n_iterations = 10
+assessment_depth = 5
+assessment_games_running = 20
+assessment_games_final = 100
+assessment_interval = 500
+output_path = "test.json"
+min_depth_filter = 6
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.champion.n_iterations, 10);
+        assert_eq!(config.champion.assessment_depth, 5);
+        assert_eq!(config.champion.assessment_games_running, 20);
+        assert_eq!(config.champion.min_depth_filter, 6);
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_zero_iterations() {
+        let mut config = AppConfig::default();
+        config.champion.n_iterations = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_invalid_depth() {
+        let mut config = AppConfig::default();
+        config.champion.assessment_depth = 0;
+        assert!(config.validate().is_err());
+        config.champion.assessment_depth = 10;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_zero_games() {
+        let mut config = AppConfig::default();
+        config.champion.assessment_games_running = 0;
+        assert!(config.validate().is_err());
     }
 }
