@@ -715,3 +715,134 @@ consolidation_decay = 1.0
 adaptive_consolidation = false
 ewc_lambda = 0.0
 ```
+
+---
+
+## Experiment 7: TD(5) Control — No CL ([27,27,18] softsign, 200k)
+
+### Setup
+
+Same network as Exp 2, but:
+- `td_steps = 5` (Monte Carlo for TicTacToe — agent makes 2-5 moves per episode)
+- All CL features DISABLED
+- `random_side = false` (alternating, matches REINFORCE baseline)
+- `scale_floor = 0.1` (legacy v2.0.0 behavior)
+
+**Purpose**: Isolate TD(5) vs REINFORCE signal quality with CL removed as a variable.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Mean | **6.71** |
+| StdDev | 1.39 |
+| D>=7 | 74.3% |
+| D>=8 | 11.4% (4 runs) |
+| **D=9** | **8.6% (3 runs)** |
+| Stalled (D<=5) | 5.7% |
+| Collapsed (>80% loss) | 11.4% |
+
+### Key Finding: TD(5) Can Reach D=9
+
+**TD(5) without CL is the first continuous-mode experiment to reach D=9** (3 runs). This refutes the earlier hypothesis that TD itself is the ceiling limitation. However, the cost is high variance (SD 1.39) and 11.4% collapses.
+
+### Trade-off vs CL
+
+| Config | Stability | Peak Depth |
+|--------|-----------|------------|
+| TD(5) + CL (Exp 6) | 0% collapse, 0% stall | D=9: 0% |
+| TD(5) sin CL (Exp 7) | 11.4% collapse, 5.7% stall | D=9: 8.6% |
+
+CL suppresses the aggressive weight updates needed to break the D=7 barrier but also protects against the inestability that produces collapses.
+
+### Conclusion (Experiment 7)
+
+TD(5) is not the ceiling limitation — it CAN reach D=9 without CL. The performance gap vs REINFORCE baseline (6.71 vs 7.63) is ~0.92 depth levels and comes from something other than the TD signal quality itself (likely differences between `step_masked()` and `act+learn` at the core level, or `scale_floor` legacy behavior still applying).
+
+---
+
+## Experiment 8: GAE(0.95) Control — No CL ([27,27,18] softsign, 200k)
+
+### Setup
+
+Same as Exp 7 but:
+- `gae_lambda = 0.95` (eligibility traces)
+- `td_steps = 0` (mutually exclusive with gae_lambda)
+
+**Purpose**: Test if GAE(λ) with output-level eligibility traces outperforms TD(5) — theoretically GAE(0.95) is a smooth interpolation between TD(0) and Monte Carlo.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Mean | **6.00** |
+| StdDev | 1.69 |
+| D>=7 | 57.1% |
+| D>=8 | 2.9% (1 run) |
+| **D=9** | **0%** |
+| Stalled (D<=5) | 17.1% |
+| Collapsed (>80% loss) | 22.9% |
+
+#### Depth Distribution
+
+| Depth | Count | % |
+|-------|-------|---|
+| D=2 | 4 | 11.4% |
+| D=3 | 1 | 2.9% |
+| D=4 | 1 | 2.9% |
+| D=6 | 9 | 25.7% |
+| D=7 | 19 | 54.3% |
+| D=8 | 1 | 2.9% |
+
+### Key Finding: GAE(0.95) is WORSE than TD(5) for TicTacToe
+
+| Metric | TD(5) sin CL (Exp 7) | GAE(0.95) sin CL (Exp 8) | Delta |
+|--------|----------------------|--------------------------|-------|
+| Mean | 6.71 | **6.00** | **-0.71** |
+| SD | 1.39 | 1.69 | +0.30 |
+| D>=8 | 11.4% | 2.9% | -8.5% |
+| D=9 | 8.6% | 0% | -8.6% |
+| Stalled | 5.7% | 17.1% | +11.4% |
+| Collapsed | 11.4% | 22.9% | +11.5% |
+
+### Why GAE Underperforms TD(5) Here
+
+1. **TD(5) is already Monte Carlo for TicTacToe**. With 2-5 agent moves per episode, TD(5) captures the complete trajectory. GAE(0.95) is an approximation of Monte Carlo — when TD(5) is already exact, GAE adds noise without benefit.
+
+2. **Output-level eligibility traces**: GAE implements traces on the output layer. For a 3-layer PC network, traces may not propagate well through deep hidden layers. TD(n) buffers complete transitions with InferResult caches, giving better propagation.
+
+3. **Interaction with PC inference loop**: The PC Actor has an internal inference loop (alpha=0.03). Output-level gradient traces may desynchronize with PC internal activations, while TD(n) preserves the complete inference state per transition.
+
+### Where GAE Would Actually Help
+
+GAE(λ) should outperform TD(n) in domains with **long episodes** where:
+- Fixed n-step is impractical (memory cost of TD(n) scales with n × network_size)
+- TD(0) has high bias but TD(large n) has high variance
+- The trajectory contains many intermediate rewards
+
+For TicTacToe (5-9 step episodes), none of these apply. **TD(5) is the correct choice** here.
+
+### Conclusion (Experiment 8)
+
+GAE(0.95) significantly underperforms TD(5) for TicTacToe — mean 6.00 vs 6.71, zero D=9 runs vs 8.6%, and doubled stall/collapse rates. The eligibility traces approach is theoretically elegant but provides no benefit when the episode is short enough that TD(n) already captures the full trajectory. **GAE is reserved for longer-episode domains** (Qubic, Connect 4, Chess).
+
+### Cross-Algorithm Summary (no CL, 200k, alternating)
+
+| Algorithm | Mean | D=9 | Stalled | Collapsed | Verdict |
+|-----------|------|-----|---------|-----------|---------|
+| REINFORCE baseline | 7.63 | 23% | — | — | Gold standard |
+| TD(0) | 6.43 | 0% | 5.7% | 0% | Insufficient signal for 5-9 step episodes |
+| **TD(5) = MC** | **6.71** | **8.6%** | **5.7%** | **11.4%** | **Best continuous algorithm** |
+| GAE(0.95) | 6.00 | 0% | 17.1% | 22.9% | Noisy approximation, worse than TD(5) |
+
+### The Residual Gap
+
+All `step_masked()` algorithms (TD(0), TD(5), GAE) produce mean depth 6.00-6.71 vs REINFORCE's 7.63. The ~0.9-1.6 gap is **not explained by TD signal quality** — TD(5) is mathematically equivalent to Monte Carlo for TicTacToe, yet still falls short of REINFORCE.
+
+**Remaining candidates for the gap:**
+1. `scale_floor = 0.1` legacy behavior in `step_masked()` (not present in `act+learn`)
+2. Differences in `surprise_buffer` update timing between the two APIs
+3. Entropy regularization applied differently per-step vs per-trajectory
+4. Some subtle ordering difference in the critic input construction
+
+This gap is at the **core library level** (pc-rl-core `step_masked` implementation) and would require investigation in core to resolve.

@@ -12,7 +12,7 @@ entropy_coeff = 0.0
 
 # ── GAE(λ): eligibility traces ───────────────────────────────────
 td_steps = 0                   # Disabled — mutually exclusive with gae_lambda
-gae_lambda = 0.95              # GAE(0.95) eligibility traces
+gae_lambda = 1.0               # GAE(1.0) = pure Monte Carlo (equivalent to REINFORCE return)
 
 # ── M1: Surprise-driven scale range — legacy behavior ──────────
 scale_floor = 0.1              # Legacy (v2.0.0) minimum LR multiplier, no freeze
