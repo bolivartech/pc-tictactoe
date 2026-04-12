@@ -308,7 +308,7 @@ pub struct ContinuousSection {
 /// assert_eq!(cfg.n_iterations, 50);
 /// assert_eq!(cfg.assessment_depth, 9);
 /// ```
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ChampionSection {
     /// Number of independent training sessions to run.
     /// Each session trains a fresh agent; the best-scoring one is kept.
@@ -338,25 +338,6 @@ pub struct ChampionSection {
     /// value.  0 = no filter (always score every session).
     #[serde(default)]
     pub min_depth_filter: usize,
-}
-
-fn default_champion_n_iterations() -> usize {
-    50
-}
-fn default_champion_assessment_depth() -> usize {
-    9
-}
-fn default_champion_games_running() -> usize {
-    50
-}
-fn default_champion_games_final() -> usize {
-    500
-}
-fn default_champion_assessment_interval() -> usize {
-    1000
-}
-fn default_champion_output_path() -> String {
-    "champion.json".to_string()
 }
 
 impl Default for ChampionSection {
@@ -410,6 +391,24 @@ impl Error for ConfigError {}
 
 // ─── Default value functions ────────────────────────────────────────────────
 
+fn default_champion_n_iterations() -> usize {
+    50
+}
+fn default_champion_assessment_depth() -> usize {
+    9
+}
+fn default_champion_games_running() -> usize {
+    50
+}
+fn default_champion_games_final() -> usize {
+    500
+}
+fn default_champion_assessment_interval() -> usize {
+    1000
+}
+fn default_champion_output_path() -> String {
+    "champion.json".to_string()
+}
 fn default_input_size() -> usize {
     9
 }
@@ -1420,17 +1419,43 @@ min_depth_filter = 6
 
     #[test]
     fn test_champion_validation_rejects_invalid_depth() {
-        let mut config = AppConfig::default();
-        config.champion.assessment_depth = 0;
-        assert!(config.validate().is_err());
-        config.champion.assessment_depth = 10;
-        assert!(config.validate().is_err());
+        {
+            let mut config = AppConfig::default();
+            config.champion.assessment_depth = 0;
+            assert!(config.validate().is_err());
+        }
+        {
+            let mut config = AppConfig::default();
+            config.champion.assessment_depth = 10;
+            assert!(config.validate().is_err());
+        }
     }
 
     #[test]
     fn test_champion_validation_rejects_zero_games() {
         let mut config = AppConfig::default();
         config.champion.assessment_games_running = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_zero_games_final() {
+        let mut config = AppConfig::default();
+        config.champion.assessment_games_final = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_zero_interval() {
+        let mut config = AppConfig::default();
+        config.champion.assessment_interval = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_champion_validation_rejects_empty_output_path() {
+        let mut config = AppConfig::default();
+        config.champion.output_path = String::new();
         assert!(config.validate().is_err());
     }
 }
