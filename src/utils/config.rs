@@ -317,8 +317,23 @@ pub struct ChampionSection {
     /// Each session trains a fresh agent; the best-scoring one is kept.
     #[serde(default = "default_champion_n_iterations")]
     pub n_iterations: usize,
-    /// Minimax opponent depth used for fitness scoring (1–9).
-    /// Higher = harder opponent; 9 = perfect play.
+    /// Minimax depth used to evaluate candidates during champion search.
+    ///
+    /// Both the running scoring (every `assessment_interval` episodes) and
+    /// the post-iteration confirmation use this depth, capped at the agent's
+    /// current curriculum depth. Default `9` matches the strongest possible
+    /// opponent.
+    ///
+    /// # Tradeoff
+    ///
+    /// Setting this lower than `9` accelerates evaluation but **flattens
+    /// `Fitness::depth_score` across all candidates whose curriculum reach
+    /// exceeds this value**. Two agents that genuinely reached curriculum
+    /// depths 6 and 9 receive identical depth bonuses when
+    /// `assessment_depth = 6`, so champion selection becomes driven by
+    /// `performance` alone at the weaker opponent. Keep at `9` for accurate
+    /// champion comparison; lower only when evaluation cost is the
+    /// bottleneck and you accept the loss of depth differentiation.
     #[serde(default = "default_champion_assessment_depth")]
     pub assessment_depth: usize,
     /// Number of games per intra-session scoring round (cheap, during training).
@@ -397,6 +412,11 @@ pub struct StressTestSection {
     /// Path for saving the agent after the stress test. Must be non-empty.
     #[serde(default = "default_stress_output_agent_path")]
     pub output_agent_path: String,
+    /// Random seed for the stress test RNG. Same seed reproduces the same
+    /// opponent-depth sequence and side alternation, enabling apples-to-apples
+    /// comparison between CL-on and CL-off runs of the same champion.
+    #[serde(default = "default_stress_seed")]
+    pub seed: u64,
 }
 
 impl Default for StressTestSection {
@@ -410,6 +430,7 @@ impl Default for StressTestSection {
             assessment_games: default_stress_assessment_games(),
             log_path: default_stress_log_path(),
             output_agent_path: default_stress_output_agent_path(),
+            seed: default_stress_seed(),
         }
     }
 }
@@ -621,6 +642,9 @@ fn default_stress_log_path() -> String {
 }
 fn default_stress_output_agent_path() -> String {
     "champion_post_stress.json".to_string()
+}
+fn default_stress_seed() -> u64 {
+    42
 }
 
 fn default_actor_hidden() -> Vec<HiddenLayerDef> {
@@ -1618,6 +1642,7 @@ min_depth_filter = 6
         assert_eq!(cfg.assessment_games, 200);
         assert_eq!(cfg.log_path, "stress_test.csv");
         assert_eq!(cfg.output_agent_path, "champion_post_stress.json");
+        assert_eq!(cfg.seed, 42);
     }
 
     #[test]

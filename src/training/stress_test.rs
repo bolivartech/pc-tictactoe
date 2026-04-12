@@ -16,7 +16,9 @@ use std::sync::Arc;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
 use pc_rl_core::serializer::{load_agent, save_agent};
 use pc_rl_core::{CpuLinAlg, PlasticityState};
+use rand::rngs::StdRng;
 use rand::Rng;
+use rand::SeedableRng;
 
 use crate::env::minimax::MinimaxPlayer;
 use crate::env::tictactoe::{GameResult, Player, TicTacToe};
@@ -280,7 +282,7 @@ impl StressTester {
         writer.flush()?;
         Self::print_terminal_row(&baseline_entry);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = StdRng::seed_from_u64(self.stress_config.seed);
         let mut episode: u64 = 0;
 
         while !self.stop_flag.load(Ordering::Acquire) {
@@ -610,5 +612,18 @@ mod tests {
         assert_eq!(StressStatus::Improved.to_string(), "IMPROVED");
         assert_eq!(StressStatus::Stable.to_string(), "STABLE");
         assert_eq!(StressStatus::Degraded.to_string(), "DEGRADED");
+    }
+
+    #[test]
+    fn test_stress_tester_seed_produces_reproducible_rng() {
+        // Verify that two RNGs seeded with the same value produce the same sequence.
+        // This is the property StressTester relies on for reproducible runs.
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+        let mut rng_a = StdRng::seed_from_u64(42);
+        let mut rng_b = StdRng::seed_from_u64(42);
+        let seq_a: Vec<u32> = (0..10).map(|_| rng_a.gen_range(1..=9)).collect();
+        let seq_b: Vec<u32> = (0..10).map(|_| rng_b.gen_range(1..=9)).collect();
+        assert_eq!(seq_a, seq_b, "Same seed must produce same sequence");
     }
 }
