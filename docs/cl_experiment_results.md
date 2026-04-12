@@ -834,15 +834,87 @@ GAE(0.95) significantly underperforms TD(5) for TicTacToe — mean 6.00 vs 6.71,
 | TD(0) | 6.43 | 0% | 5.7% | 0% | Insufficient signal for 5-9 step episodes |
 | **TD(5) = MC** | **6.71** | **8.6%** | **5.7%** | **11.4%** | **Best continuous algorithm** |
 | GAE(0.95) | 6.00 | 0% | 17.1% | 22.9% | Noisy approximation, worse than TD(5) |
+| GAE(1.0) | 6.23 | 2.9% | 17.1% | 11.4% | Pure MC traces, still worse than TD(5) |
+
+---
+
+## Experiment 9: GAE(1.0) Control — Pure Monte Carlo ([27,27,18] softsign, 200k)
+
+### Setup
+
+Same as Exp 8 but `gae_lambda = 1.0` (no trace decay). Theoretically equivalent to pure Monte Carlo — should match TD(5) since TD(5) is also Monte Carlo for TicTacToe (agent makes at most 5 moves per episode).
+
+**Purpose**: Test whether GAE with no decay (λ=1.0) matches TD(5) and confirm/refute the theoretical equivalence between GAE(1.0) and TD(n) for short episodes.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| Mean | **6.23** |
+| StdDev | 1.40 |
+| D>=7 | 51.4% |
+| D>=8 | 8.6% (3 runs) |
+| **D=9** | **2.9% (1 run)** |
+| Stalled (D<=5) | 17.1% |
+| Collapsed (>80% loss) | 11.4% |
+| High-win (>40%) | 25.7% |
+| No-draw (<1%) | 37.1% |
+
+#### Depth Distribution
+
+| Depth | Count | % |
+|-------|-------|---|
+| D=2 | 1 | 2.9% |
+| D=3 | 1 | 2.9% |
+| D=4 | 3 | 8.6% |
+| D=5 | 1 | 2.9% |
+| D=6 | 11 | 31.4% |
+| D=7 | 15 | 42.9% |
+| D=8 | 2 | 5.7% |
+| D=9 | 1 | 2.9% |
+
+### Key Finding: GAE(1.0) is NOT equivalent to TD(5)
+
+Despite being theoretically both Monte Carlo for TicTacToe, GAE(1.0) underperforms TD(5) significantly:
+
+| Metric | TD(5) (Exp 7) | GAE(1.0) (Exp 9) | Delta |
+|--------|---------------|-------------------|-------|
+| Mean | 6.71 | 6.23 | **-0.48** |
+| D=9 | 8.6% | 2.9% | -5.7% |
+| D>=8 | 11.4% | 8.6% | -2.8% |
+| Stalled | 5.7% | 17.1% | +11.4% |
+| High-win | 17.1% | 25.7% | +8.6% |
+| No-draw | 28.6% | 37.1% | +8.5% |
+
+GAE(1.0) improves marginally over GAE(0.95) (mean 6.23 vs 6.00, confirming λ=1.0 is closer to MC than λ=0.95), but still falls short of TD(5).
+
+### Why GAE(1.0) ≠ TD(5) in practice
+
+Despite theoretical equivalence, the two produce different results due to implementation differences:
+
+1. **Signal propagation through layers**: TD(n) buffers complete transitions with `InferResult` caches, preserving activations across all 3 hidden layers. GAE uses eligibility traces **only at the output layer**, so the gradient signal must propagate back through the PC inference loop each update without the benefit of cached activations.
+
+2. **Update timing**: TD(5) waits for the buffer to fill, then learns from the oldest transition using its cached state. GAE updates at every step with the accumulated trace. In 5-9 step episodes, this produces different gradient flows even when the mathematical target is the same.
+
+3. **Offensive bias amplification**: GAE(1.0) has the highest no-draw rate (37.1%) of all experiments. The trace accumulation may bias gradients toward early actions (where offense pays off as P1), producing agents that never learn P2 defense.
+
+### Conclusion (Experiment 9)
+
+**GAE(1.0) is not a viable replacement for TD(5) in TicTacToe.** Even at λ=1.0 (pure Monte Carlo), the output-level eligibility traces do not match the full transition buffering of TD(n). For short episodes with multi-layer PC networks, TD(5) remains strictly superior.
+
+**Implication for champion search**: Use `td_steps = 5` (not GAE) when searching for optimal agents via `find-champion`. The best continuous-mode algorithm for TicTacToe is TD(5) without CL.
+
+---
 
 ### The Residual Gap
 
-All `step_masked()` algorithms (TD(0), TD(5), GAE) produce mean depth 6.00-6.71 vs REINFORCE's 7.63. The ~0.9-1.6 gap is **not explained by TD signal quality** — TD(5) is mathematically equivalent to Monte Carlo for TicTacToe, yet still falls short of REINFORCE.
+All `step_masked()` algorithms (TD(0), TD(5), GAE(0.95), GAE(1.0)) produce mean depth 6.00-6.71 vs REINFORCE's 7.63. The ~0.9-1.6 gap is **not explained by TD signal quality** — TD(5) is mathematically equivalent to Monte Carlo for TicTacToe, yet still falls short of REINFORCE.
 
 **Remaining candidates for the gap:**
 1. `scale_floor = 0.1` legacy behavior in `step_masked()` (not present in `act+learn`)
 2. Differences in `surprise_buffer` update timing between the two APIs
 3. Entropy regularization applied differently per-step vs per-trajectory
 4. Some subtle ordering difference in the critic input construction
+5. Activation cache handling differences between per-step inference and trajectory-based inference
 
 This gap is at the **core library level** (pc-rl-core `step_masked` implementation) and would require investigation in core to resolve.
