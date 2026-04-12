@@ -25,7 +25,8 @@ pub struct Fitness {
     pub performance: f64,
     /// `(max_depth - 1) / 8`, in `[0, 1]`.
     pub depth_score: f64,
-    /// `1 - |win_rate - draw_rate|`, in `[0, 1]`.
+    /// `1 - |win_rate - draw_rate|`, in `[0, 1]`. Zero when `performance` is zero
+    /// (a 100%-loss agent has no balance to reward).
     pub balance: f64,
 }
 
@@ -50,7 +51,11 @@ impl Fitness {
         let performance = (win_rate + draw_rate).clamp(0.0, 1.0);
         let depth_clamped = max_depth.saturating_sub(1) as f64;
         let depth_score = (depth_clamped / MAX_DEPTH_NORMALIZER).clamp(0.0, 1.0);
-        let balance = (1.0 - (win_rate - draw_rate).abs()).clamp(0.0, 1.0);
+        let balance = if performance > 0.0 {
+            (1.0 - (win_rate - draw_rate).abs()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         Self {
             performance,
             depth_score,
@@ -215,12 +220,20 @@ mod tests {
     fn test_fitness_collapsed_d6_100_loss() {
         let fit = Fitness::from_scores(0.0, 0.0, 6);
         let combined = fit.combined();
-        // Formula: 0.55 * 0.0 + 0.40 * 0.625 + 0.05 * 1.0 = 0.0 + 0.25 + 0.05 = 0.30
+        // Formula: 0.55 * 0.0 + 0.40 * 0.625 + 0.05 * 0.0 = 0.0 + 0.25 + 0.0 = 0.25
+        // (balance is gated to 0.0 when performance == 0)
         assert!(
-            (combined - 0.30).abs() < 1e-6,
-            "Expected 0.30, got {}",
+            (combined - 0.25).abs() < 1e-6,
+            "Expected 0.25, got {}",
             combined
         );
+    }
+
+    #[test]
+    fn test_fitness_balance_zeroed_when_performance_zero() {
+        let fit = Fitness::from_scores(0.0, 0.0, 9);
+        assert_eq!(fit.balance, 0.0);
+        // A first-iteration loss-only agent should not get the 0.05 free credit.
     }
 
     #[test]
