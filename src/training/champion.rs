@@ -133,7 +133,7 @@ impl ChampionFinder {
             let agent = PcActorCritic::new(CpuLinAlg::new(), agent_cfg, seed)?;
             let mut trainer = ContinuousTrainer::new(agent, &config, self.stop_flag.clone());
 
-            let mut peak_fitness = 0.0_f64;
+            let mut peak_fitness = f64::NEG_INFINITY;
             let mut peak_depth = 1_usize;
             let mut has_snapshot = false;
             // Write the snapshot into the same directory as output_path to
@@ -156,12 +156,13 @@ impl ChampionFinder {
                     .episode_count()
                     .is_multiple_of(champion_cfg.assessment_interval)
                 {
+                    let eval_depth = trainer.current_depth().min(champion_cfg.assessment_depth);
                     let (w, d, _l) = score_vs_minimax(
                         trainer.agent_mut(),
-                        champion_cfg.assessment_depth,
+                        eval_depth,
                         champion_cfg.assessment_games_running,
                     );
-                    let fitness = Fitness::from_scores(w, d, trainer.current_depth()).combined();
+                    let fitness = Fitness::from_scores(w, d, eval_depth).combined();
 
                     if fitness > peak_fitness {
                         peak_fitness = fitness;
@@ -181,14 +182,18 @@ impl ChampionFinder {
             let mut replaced = false;
 
             if has_snapshot && peak_depth >= champion_cfg.min_depth_filter {
-                // Load the snapshot and run full-accuracy scoring
+                // Load the snapshot and run full-accuracy scoring.
+                // Use the same depth cap as the running scorer so that the
+                // depth dimension of the fitness is consistent with what was
+                // actually evaluated.
+                let confirm_depth = peak_depth.min(champion_cfg.assessment_depth);
                 let (mut snapshot_agent, _) = load_agent(&snapshot_path, CpuLinAlg::new())?;
                 let (w, d, _l) = score_vs_minimax(
                     &mut snapshot_agent,
-                    champion_cfg.assessment_depth,
+                    confirm_depth,
                     champion_cfg.assessment_games_final,
                 );
-                let confirmed_fitness = Fitness::from_scores(w, d, peak_depth).combined();
+                let confirmed_fitness = Fitness::from_scores(w, d, confirm_depth).combined();
 
                 eprintln!(
                     "  peak_fitness={peak_fitness:.4} depth={peak_depth} confirmed={confirmed_fitness:.4}"
