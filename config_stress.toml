@@ -103,7 +103,6 @@ assessment_interval = 1000
 assessment_games = 200
 log_path = "stress_test.csv"
 output_agent_path = "champion_post_stress.json"
-seed = 42  # Seed for reproducible CL-on vs CL-off comparisons
 
 [logger]
 level = "info"

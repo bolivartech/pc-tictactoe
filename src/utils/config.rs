@@ -412,11 +412,6 @@ pub struct StressTestSection {
     /// Path for saving the agent after the stress test. Must be non-empty.
     #[serde(default = "default_stress_output_agent_path")]
     pub output_agent_path: String,
-    /// Random seed for the stress test RNG. Same seed reproduces the same
-    /// opponent-depth sequence and side alternation, enabling apples-to-apples
-    /// comparison between CL-on and CL-off runs of the same champion.
-    #[serde(default = "default_stress_seed")]
-    pub seed: u64,
 }
 
 impl Default for StressTestSection {
@@ -430,7 +425,6 @@ impl Default for StressTestSection {
             assessment_games: default_stress_assessment_games(),
             log_path: default_stress_log_path(),
             output_agent_path: default_stress_output_agent_path(),
-            seed: default_stress_seed(),
         }
     }
 }
@@ -643,10 +637,6 @@ fn default_stress_log_path() -> String {
 fn default_stress_output_agent_path() -> String {
     "champion_post_stress.json".to_string()
 }
-fn default_stress_seed() -> u64 {
-    42
-}
-
 fn default_actor_hidden() -> Vec<HiddenLayerDef> {
     vec![HiddenLayerDef {
         size: 18,
@@ -1642,7 +1632,6 @@ min_depth_filter = 6
         assert_eq!(cfg.assessment_games, 200);
         assert_eq!(cfg.log_path, "stress_test.csv");
         assert_eq!(cfg.output_agent_path, "champion_post_stress.json");
-        assert_eq!(cfg.seed, 42);
     }
 
     #[test]
