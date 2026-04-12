@@ -170,6 +170,12 @@ pub fn format_depth_histogram(histogram: &BTreeMap<usize, u64>) -> String {
 /// score_vs_minimax) so that drift measurements are not contaminated by an
 /// untrained side policy.
 ///
+/// Drift measurement isolates inference (`act` via `score_vs_minimax`) from
+/// training (`step_masked` via `run_stress_episode`) by calling
+/// `agent.reset_step()` around each scoring round. This ensures the CSV's
+/// fitness column reflects training-side drift only, not scoring-side
+/// contamination.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -390,11 +396,19 @@ impl StressTester {
         baseline_fitness: f64,
         prev_fitness: f64,
     ) -> Result<StressLogEntry, Box<dyn Error>> {
+        // Defensive isolation: reset per-step bookkeeping before scoring so that
+        // the inference-only act() calls in score_vs_minimax cannot contaminate
+        // the next training step_masked(). The exact drift signal we are
+        // measuring depends on this isolation.
+        self.agent.reset_step();
         let (w, d, l) = score_vs_minimax(
             &mut self.agent,
             STRESS_SCORING_DEPTH,
             self.stress_config.assessment_games,
         );
+        // Defensive isolation: clear any inference-side cache so the next
+        // run_stress_episode starts from a clean per-step state.
+        self.agent.reset_step();
         let fitness = Fitness::from_scores(w, d, STRESS_SCORING_DEPTH).combined();
         let delta_baseline = fitness - baseline_fitness;
         let delta_prev = fitness - prev_fitness;
