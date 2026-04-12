@@ -8,9 +8,11 @@
 //! - [`continuous`] — Continuous training with surprise-based immediate updates.
 //! - [`fitness`] — GA-compatible fitness scoring for trained agents.
 //! - [`champion`] — Multi-session champion search with snapshot persistence.
+//! - [`stress_test`] — Stress test for champion validation under CL.
 
 pub mod champion;
 pub mod continuous;
 pub mod experiment;
 pub mod fitness;
+pub mod stress_test;
 pub mod trainer;
