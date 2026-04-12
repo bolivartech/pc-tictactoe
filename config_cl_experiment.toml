@@ -1,4 +1,5 @@
-# Continuous Learning experiment config — 3-layer network, all CL features enabled
+# GAE(0.95) vs REINFORCE control experiment — CL disabled, alternating sides
+# Equivalent to REINFORCE baseline ([27,27,18] 3-layer, 200k episodes, alternating)
 # Use with: cargo run --release -- seed-test -c config_cl_experiment.toml -n 35 --continuous
 
 [agent]
@@ -9,40 +10,26 @@ adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
 
-# ── TD(n): n-step returns ────────────────────────────────────────
-td_steps = 4                   # 4-step returns for TicTacToe (5-9 step episodes)
+# ── GAE(λ): eligibility traces ───────────────────────────────────
+td_steps = 0                   # Disabled — mutually exclusive with gae_lambda
+gae_lambda = 0.95              # GAE(0.95) eligibility traces
 
-# ── M1: Surprise-driven scale range ──────────────────────────────
-scale_floor = 0.0              # True weight freeze when surprise is low
+# ── M1: Surprise-driven scale range — legacy behavior ──────────
+scale_floor = 0.1              # Legacy (v2.0.0) minimum LR multiplier, no freeze
 scale_ceil = 2.0               # 2x learning rate when surprise is high
 
-# ── M2: Hysteresis — dual-EWMA FROZEN/PLASTIC state machines ────
-actor_hysteresis = true
-actor_fast_window = 20
-actor_slow_window = 500
-actor_wake_fraction = 0.5
-actor_sleep_fraction = 0.01
+# ── M2: Hysteresis — DISABLED ───────────────────────────────────
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
 
-critic_hysteresis = true
-critic_fast_window = 20
-critic_slow_window = 100
-critic_wake_fraction = 0.5
-critic_sleep_fraction = 0.3
+# ── M3: Consolidation decay — DISABLED ──────────────────────────
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
 
-actor_wakes_critic = true
-actor_wakes_critic_threshold = 1000
-critic_wakes_actor = true
-critic_wakes_actor_threshold = 1000
-
-# ── M3: Consolidation decay — per-layer learning rate modulation ─
-consolidation_decay = 0.95     # Shallow layers consolidate faster
-critic_consolidation_decay = 0.95
-adaptive_consolidation = true  # Sigmoid-driven per-layer decay
-consolidation_ema_beta = 0.99
-consolidation_sigmoid_k = 10.0
-consolidation_error_threshold = 0.05
-
-# ── M4: EWC — disabled for curriculum learning ──────────────────
+# ── M4: EWC — DISABLED ──────────────────────────────────────────
 ewc_lambda = 0.0
 
 [agent.actor]
@@ -83,7 +70,7 @@ size = 36
 activation = "softsign"
 
 [training]
-episodes = 500000
+episodes = 200000
 checkpoint_interval = 5000
 log_interval = 500
 seed = 42
@@ -93,8 +80,8 @@ advance_threshold = 0.95
 window_size = 1000
 
 [continuous]
-max_episodes = 500000
-random_side = true             # Random side assignment to reduce surprise oscillation
+max_episodes = 200000
+random_side = false            # Alternating (even=P1, odd=P2) — matches REINFORCE baseline
 
 [logger]
 level = "info"

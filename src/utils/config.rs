@@ -84,6 +84,10 @@ pub struct AgentSection {
     /// 0 = standard TD(0), n > 0 = accumulate n steps before bootstrapping.
     #[serde(default)]
     pub td_steps: usize,
+    /// GAE lambda for eligibility traces. Mutually exclusive with td_steps > 0.
+    /// None = disabled. Some(0.95) = GAE(0.95), recommended for short episodes.
+    #[serde(default)]
+    pub gae_lambda: Option<f64>,
     // ─── Continuous Learning (M1–M4) ───────────────────────────────────────
     /// Learning rate floor when surprise is low. 0.0 = true weight freeze.
     #[serde(default = "default_scale_floor")]
@@ -482,6 +486,7 @@ impl Default for AgentSection {
             surprise_buffer_size: default_surprise_buffer_size(),
             entropy_coeff: default_entropy_coeff(),
             td_steps: 0,
+            gae_lambda: None,
             scale_floor: default_scale_floor(),
             scale_ceil: default_scale_ceil(),
             actor_hysteresis: false,
@@ -700,6 +705,23 @@ impl AppConfig {
             });
         }
 
+        // TD(n) vs GAE mutual exclusion
+        if a.td_steps > 0 && a.gae_lambda.is_some() {
+            return Err(ConfigError {
+                message: format!(
+                    "td_steps ({}) and gae_lambda ({:?}) are mutually exclusive — set only one",
+                    a.td_steps, a.gae_lambda
+                ),
+            });
+        }
+        if let Some(lambda) = a.gae_lambda {
+            if !(0.0..=1.0).contains(&lambda) {
+                return Err(ConfigError {
+                    message: format!("gae_lambda ({lambda}) must be in [0.0, 1.0]"),
+                });
+            }
+        }
+
         // M2: hysteresis windows and fractions
         if a.actor_hysteresis {
             if a.actor_fast_window >= a.actor_slow_window {
@@ -840,6 +862,7 @@ impl AppConfig {
             surprise_buffer_size: self.agent.surprise_buffer_size,
             entropy_coeff: self.agent.entropy_coeff,
             td_steps: self.agent.td_steps,
+            gae_lambda: self.agent.gae_lambda,
             scale_floor: self.agent.scale_floor,
             scale_ceil: self.agent.scale_ceil,
             actor_hysteresis: self.agent.actor_hysteresis,
