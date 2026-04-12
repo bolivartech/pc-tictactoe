@@ -52,6 +52,43 @@ pub struct IterationSummary {
     pub replaced_champion: bool,
 }
 
+/// RAII guard that removes a snapshot file on drop if still armed.
+///
+/// Create with [`SnapshotGuard::new`], arm it with [`SnapshotGuard::arm`]
+/// immediately after a successful `save_agent` call, and disarm it with
+/// [`SnapshotGuard::disarm`] once the file has been intentionally promoted
+/// or removed. If the guard is dropped while armed (e.g. due to `?`
+/// propagation), `Drop` will attempt to delete the file so no orphan is
+/// left on disk.
+struct SnapshotGuard {
+    path: Option<PathBuf>,
+}
+
+impl SnapshotGuard {
+    /// Creates a new, disarmed guard.
+    fn new() -> Self {
+        Self { path: None }
+    }
+
+    /// Arms the guard with `path`.  Any previously armed path is replaced.
+    fn arm(&mut self, path: PathBuf) {
+        self.path = Some(path);
+    }
+
+    /// Disarms the guard; Drop will no longer attempt deletion.
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for SnapshotGuard {
+    fn drop(&mut self) {
+        if let Some(ref p) = self.path {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
 /// Champion search driver.
 ///
 /// Runs `n_iterations` independent training sessions, evaluates each
@@ -145,12 +182,15 @@ impl ChampionFinder {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("champion");
-            let snapshot_path: PathBuf =
+            let snapshot_pathbuf: PathBuf =
                 output_dir.join(format!("tmp_{output_stem}_peak_{iteration}.json"));
-            let snapshot_path = snapshot_path.to_string_lossy().to_string();
+
+            // RAII guard: ensures the snapshot file is removed if any `?`
+            // propagation occurs between save and the explicit cleanup below.
+            let mut guard = SnapshotGuard::new();
 
             while !trainer.should_stop() {
-                trainer.run_single_episode_pub();
+                trainer.train_one_episode();
 
                 if trainer
                     .episode_count()
@@ -169,13 +209,32 @@ impl ChampionFinder {
                         peak_depth = trainer.current_depth();
                         save_agent(
                             trainer.agent(),
-                            &snapshot_path,
+                            snapshot_pathbuf.to_str().unwrap_or_default(),
                             trainer.episode_count(),
                             None,
                         )?;
+                        // Arm the guard immediately after a successful save so
+                        // any subsequent `?` propagation removes the orphan.
+                        guard.arm(snapshot_pathbuf.clone());
                         has_snapshot = true;
                     }
                 }
+            }
+
+            // W4: stop flag fired mid-iteration — abandon this iteration without
+            // promoting the snapshot to champion.  The SnapshotGuard cleans up
+            // the tmp file on drop.
+            if self.stop_flag.load(Ordering::Acquire) {
+                let final_depth = trainer.current_depth();
+                iterations.push(IterationSummary {
+                    iteration,
+                    seed,
+                    peak_fitness,
+                    final_depth,
+                    peak_depth,
+                    replaced_champion: false,
+                });
+                break;
             }
 
             let final_depth = trainer.current_depth();
@@ -187,7 +246,10 @@ impl ChampionFinder {
                 // depth dimension of the fitness is consistent with what was
                 // actually evaluated.
                 let confirm_depth = peak_depth.min(champion_cfg.assessment_depth);
-                let (mut snapshot_agent, _) = load_agent(&snapshot_path, CpuLinAlg::new())?;
+                let (mut snapshot_agent, _) = load_agent(
+                    snapshot_pathbuf.to_str().unwrap_or_default(),
+                    CpuLinAlg::new(),
+                )?;
                 let (w, d, _l) = score_vs_minimax(
                     &mut snapshot_agent,
                     confirm_depth,
@@ -205,20 +267,25 @@ impl ChampionFinder {
                     champion_iteration = iteration;
                     champion_seed = seed;
                     // Use copy+delete to handle cross-device moves (e.g. C: temp → D: cwd).
-                    if fs::rename(&snapshot_path, &champion_cfg.output_path).is_err() {
-                        fs::copy(&snapshot_path, &champion_cfg.output_path)?;
-                        fs::remove_file(&snapshot_path)?;
+                    if fs::rename(&snapshot_pathbuf, &champion_cfg.output_path).is_err() {
+                        fs::copy(&snapshot_pathbuf, &champion_cfg.output_path)?;
+                        fs::remove_file(&snapshot_pathbuf)?;
                     }
+                    // Disarm: file has been renamed/copied to champion; guard
+                    // must not attempt deletion.
+                    guard.disarm();
                     replaced = true;
                     eprintln!(
                         "  NEW CHAMPION: fitness={confirmed_fitness:.4} depth={peak_depth} saved to {}",
                         champion_cfg.output_path
                     );
-                } else if fs::metadata(&snapshot_path).is_ok() {
-                    fs::remove_file(&snapshot_path)?;
+                } else if fs::metadata(&snapshot_pathbuf).is_ok() {
+                    fs::remove_file(&snapshot_pathbuf)?;
+                    guard.disarm();
                 }
-            } else if has_snapshot && fs::metadata(&snapshot_path).is_ok() {
-                fs::remove_file(&snapshot_path)?;
+            } else if has_snapshot && fs::metadata(&snapshot_pathbuf).is_ok() {
+                fs::remove_file(&snapshot_pathbuf)?;
+                guard.disarm();
             }
 
             iterations.push(IterationSummary {
