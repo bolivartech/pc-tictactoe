@@ -18,6 +18,7 @@ const MAX_DEPTH_NORMALIZER: f64 = 8.0;
 /// All components are normalized to `[0, 1]`. The combined score
 /// uses weights that prioritize performance (55%) and depth (40%)
 /// over balance (5%).
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fitness {
     /// `win_rate + draw_rate`, in `[0, 1]`.
@@ -37,7 +38,7 @@ impl Fitness {
     /// * `max_depth` - Highest curriculum depth reached, in `[1, 9]`.
     ///
     /// Returns `Fitness { performance: 0, depth_score: 0, balance: 0 }`
-    /// if any input is NaN.
+    /// if any rate input is NaN or infinite.
     pub fn from_scores(win_rate: f64, draw_rate: f64, max_depth: usize) -> Self {
         if !win_rate.is_finite() || !draw_rate.is_finite() {
             return Self {
@@ -60,6 +61,7 @@ impl Fitness {
     /// Weighted combined score: `0.55 * perf + 0.40 * depth + 0.05 * balance`.
     ///
     /// Returns a value in `[0, 1]`. Higher is better.
+    #[must_use]
     pub fn combined(&self) -> f64 {
         WEIGHT_PERFORMANCE * self.performance
             + WEIGHT_DEPTH * self.depth_score
@@ -178,6 +180,18 @@ mod tests {
     fn test_fitness_nan_input_returns_zero() {
         let fit = Fitness::from_scores(f64::NAN, 0.5, 9);
         assert_eq!(fit.combined(), 0.0);
+        let fit2 = Fitness::from_scores(0.5, f64::NAN, 9);
+        assert_eq!(fit2.combined(), 0.0);
+    }
+
+    #[test]
+    fn test_weights_sum_to_one() {
+        let sum = WEIGHT_PERFORMANCE + WEIGHT_DEPTH + WEIGHT_BALANCE;
+        assert!(
+            (sum - 1.0).abs() < f64::EPSILON,
+            "Weights must sum to 1.0, got {}",
+            sum
+        );
     }
 
     #[test]
