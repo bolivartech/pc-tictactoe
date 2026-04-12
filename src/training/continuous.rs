@@ -340,7 +340,7 @@ impl ContinuousTrainer {
     ///
     /// After this call `episode_count` is exactly one greater than before.
     /// Curriculum depth may have advanced if the advancement criterion was met.
-    pub fn run_single_episode_pub(&mut self) {
+    pub fn train_one_episode(&mut self) {
         self.run_episode();
 
         let outcome = self.episode_outcome();
@@ -472,10 +472,10 @@ mod tests {
     }
 
     #[test]
-    fn test_run_single_episode_pub_increments_count() {
+    fn test_train_one_episode_increments_count() {
         let mut trainer = make_continuous_trainer(100);
         assert_eq!(trainer.episode_count(), 0);
-        trainer.run_single_episode_pub();
+        trainer.train_one_episode();
         assert_eq!(trainer.episode_count(), 1);
     }
 
