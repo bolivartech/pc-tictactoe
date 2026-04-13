@@ -216,7 +216,15 @@ impl StressTester {
         stress_config: StressTestSection,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<Self, Box<dyn Error>> {
-        let (agent, _metadata) = load_agent(&stress_config.champion_path, CpuLinAlg::new())?;
+        let (mut agent, _metadata) = load_agent(&stress_config.champion_path, CpuLinAlg::new())?;
+        // Apply the stress config's CL fields (hysteresis, consolidation, EWC) to
+        // the loaded champion. The champion was trained with CL disabled, so this
+        // bootstraps the hysteresis state machines and Fisher state without
+        // touching weights. apply_config validates topology + per-network params
+        // and will error if config_stress.toml diverges from the champion on
+        // immutable fields (lr, alpha, topology, etc.).
+        let agent_cfg = base_config.to_agent_config()?;
+        agent.apply_config(agent_cfg)?;
         let metrics = Metrics::new(base_config.curriculum.window_size);
         Ok(Self {
             agent,
@@ -579,6 +587,14 @@ impl StressTester {
             csl = entry.critic_slow,
             tr = entry.hysteresis_transitions
         );
+    }
+}
+
+#[cfg(test)]
+impl StressTester {
+    /// Test-only accessor for verifying CL state injection.
+    pub fn agent_for_test(&self) -> &PcActorCritic {
+        &self.agent
     }
 }
 

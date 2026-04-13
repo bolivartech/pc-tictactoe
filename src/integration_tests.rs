@@ -326,6 +326,94 @@ mod tests {
     }
 
     #[test]
+    fn test_stress_tester_applies_cl_config_from_base() {
+        use crate::training::stress_test::StressTester;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        // 1. Build a fresh agent with CL DISABLED (matching the champion case)
+        let mut champion_config = AppConfig::default();
+        champion_config.agent.actor_hysteresis = false;
+        champion_config.agent.critic_hysteresis = false;
+        champion_config.agent.ewc_lambda = 0.0;
+        champion_config.agent.consolidation_decay = 1.0;
+        champion_config.agent.scale_floor = 0.0;
+        let champion_agent_cfg = champion_config.to_agent_config().unwrap();
+        let champion_agent = pc_rl_core::pc_actor_critic::PcActorCritic::new(
+            pc_rl_core::CpuLinAlg::new(),
+            champion_agent_cfg,
+            42,
+        )
+        .unwrap();
+
+        // 2. Save the CL-disabled champion to a temp path
+        let dir = std::env::temp_dir().join(format!("pc_stress_cl_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let champion_path = dir
+            .join("cl_off_champion.json")
+            .to_string_lossy()
+            .to_string();
+        let csv_path = dir.join("cl_stress.csv").to_string_lossy().to_string();
+        let post_path = dir
+            .join("cl_stress_post.json")
+            .to_string_lossy()
+            .to_string();
+        pc_rl_core::serializer::save_agent(&champion_agent, &champion_path, 0, None).unwrap();
+
+        // 3. Build a base_config with CL ENABLED (hysteresis on, small windows)
+        let mut base_config = AppConfig::default();
+        base_config.agent.actor_hysteresis = true;
+        base_config.agent.actor_fast_window = 5;
+        base_config.agent.actor_slow_window = 20;
+        base_config.agent.actor_wake_fraction = 0.5;
+        base_config.agent.actor_sleep_fraction = 0.3;
+        base_config.agent.critic_hysteresis = true;
+        base_config.agent.critic_fast_window = 5;
+        base_config.agent.critic_slow_window = 20;
+        base_config.agent.critic_wake_fraction = 0.5;
+        base_config.agent.critic_sleep_fraction = 0.3;
+        base_config.agent.ewc_lambda = 0.0;
+        base_config.agent.consolidation_decay = 1.0;
+        base_config.agent.scale_floor = 0.0;
+        base_config.training.log_interval = 0;
+
+        // 4. Build stress_config pointing to the saved champion
+        let mut stress_config = base_config.stress_test.clone();
+        stress_config.champion_path = champion_path.clone();
+        stress_config.max_episodes = 200;
+        stress_config.assessment_interval = 50;
+        stress_config.assessment_games = 3;
+        stress_config.log_path = csv_path.clone();
+        stress_config.output_agent_path = post_path.clone();
+        stress_config.opponent_depth_min = 1;
+        stress_config.opponent_depth_max = 2;
+
+        // 5. Construct StressTester — apply_config must succeed
+        let stop = Arc::new(AtomicBool::new(false));
+        let tester = StressTester::new(base_config, stress_config, stop).unwrap();
+
+        // 6. Verify that the internal agent has hysteresis initialized via
+        //    the test-only accessor
+        let cl_state = tester.agent_for_test().to_cl_state();
+        assert!(
+            cl_state.is_some(),
+            "apply_config should have bootstrapped CL state"
+        );
+        let cl = cl_state.unwrap();
+        assert!(
+            cl.actor_hysteresis.is_some(),
+            "actor hysteresis should be initialized after apply_config"
+        );
+        assert!(
+            cl.critic_hysteresis.is_some(),
+            "critic hysteresis should be initialized after apply_config"
+        );
+
+        // 7. Clean up temp files
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_step_masked_completes_episode() {
         let mut agent = cl_agent_from_config();
         let mut env = TicTacToe::new();
