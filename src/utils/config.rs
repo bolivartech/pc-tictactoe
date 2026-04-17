@@ -1190,6 +1190,10 @@ impl AppConfig {
             fisher_decay: self.agent.fisher_decay,
             fisher_ema_beta: self.agent.fisher_ema_beta,
             logits_reversal: self.agent.logits_reversal,
+            // Phase 1 self-recovery — no-op defaults until TOML plumbing lands.
+            distillation_lambda_polyak: 0.0,
+            polyak_tau: 0.005,
+            distillation_lambda_frozen: 0.0,
         })
     }
 
