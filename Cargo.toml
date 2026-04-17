@@ -9,7 +9,7 @@ description = "Tic-Tac-Toe training environment for the Deliberative Predictive 
 repository = "https://github.com/BolivarTech/PC-TicTacToe"
 
 [dependencies]
-pc-rl-core = "2.0.0"
+pc-rl-core = { path = "D:/jbolivarg/RustProjects/PC-RL-Core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"

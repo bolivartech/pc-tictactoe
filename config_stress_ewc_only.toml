@@ -1,0 +1,145 @@
+# Stress test config — EWC ONLY (M2 hysteresis disabled, EWC active)
+#
+# Purpose: isolate the pure contribution of EWC (M4) by disabling all M2
+# hysteresis. Tests whether EWC alone is sufficient to prevent the cascade
+# to 0.40, or whether it requires the freeze windows from M2 to work.
+#
+# Hypothesis being tested:
+#   "Does EWC=0.1 alone prevent the cascade to 0.40, or does it need
+#    hysteresis-driven freeze windows to be effective?"
+#
+# Possible outcomes:
+#   - No cascade (stays in 0.70 plateau like CL-balanced+EWC):
+#     EWC is the standalone protective mechanism. Hysteresis is optional.
+#   - Cascade like CL-off (~ep 90k → 0.40):
+#     EWC requires hysteresis freeze windows to function. The two
+#     mechanisms are complementary necessary, not independent.
+#   - Cascade earlier than CL-off:
+#     EWC interacts destructively with full plasticity (Fisher gradients
+#     applied unconditionally without freeze gating).
+#
+# Compared against:
+#   - config_stress_cl_off.toml      → no CL at all (cascades to 0.40)
+#   - config_stress_cl_balanced.toml → hysteresis + EWC (no cascade in 500k)
+#   - config_stress.toml (CL-max)    → permanent freeze + EWC (preserves 0.95)
+#
+# Use with: cargo run --release -- stress-test -c config_stress_ewc_only.toml
+#
+# Note on M1: this config matches config_stress_cl_off.toml in EVERY field
+# except ewc_lambda. M1 is neutralized via scale_floor=0.999, scale_ceil=1.001
+# (the validator requires strict inequality, so exactly 1.0/1.0 is rejected).
+# This gives a single-variable A/B test against CL-off:
+#   ewc_lambda = 0.0 → CL-off (control)
+#   ewc_lambda = 0.1 → EWC-only (this config)
+# Any difference in cascade rate or fitness trajectory between the two is
+# attributable purely to EWC's per-parameter Fisher protection.
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+td_steps = 5
+
+# M1 — Scale range NEUTRALIZED (matches config_stress_cl_off.toml exactly)
+# Setting scale_floor ≈ scale_ceil ≈ 1.0 makes the surprise-driven lr
+# multiplier essentially constant at 1.0, neutralizing M1. This ensures
+# that the ONLY field differing from config_stress_cl_off.toml is
+# ewc_lambda (0.0 vs 0.1), giving a clean A/B test of EWC's marginal
+# contribution. Cannot use scale_floor == scale_ceil literally because
+# the validator requires strict inequality.
+scale_floor = 0.999
+scale_ceil = 1.001
+
+# M2 — Hysteresis: DISABLED (this is the key isolation)
+# No FROZEN/PLASTIC state machine. The actor and critic are continuously
+# plastic, exposing every gradient update directly to the weights. Only
+# EWC stands between the agent and catastrophic forgetting.
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
+
+# M3 — Consolidation disabled
+# Without hysteresis there is no FROZEN state for consolidation to operate
+# on, so M3 is structurally inert here. Set to defaults to avoid any
+# subtle interaction.
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+
+# M4 — EWC enabled (the variable under test)
+# Per-parameter Fisher protection. Same lambda as CL-balanced+EWC and
+# CL-max for direct comparability. Fisher state is built and updated
+# every step regardless of plasticity state, so it should be active.
+ewc_lambda = 0.1
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 100000
+checkpoint_interval = 5000
+log_interval = 1000
+seed = 42
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 100000
+random_side = true
+
+[stress_test]
+champion_path = "champion.json"
+opponent_depth_min = 1
+opponent_depth_max = 9
+max_episodes = 100000
+assessment_interval = 1000
+assessment_games = 200
+log_path = "stress_test_ewc_only.csv"
+output_agent_path = "champion_post_stress_ewc_only.json"
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760

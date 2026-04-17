@@ -1,0 +1,174 @@
+# Stress test config — CL-BALANCED (original hysteresis + EWC overlay)
+#
+# Purpose: ISOLATE the contribution of EWC (M4) by running with the SAME
+# hysteresis parameters as the original CL-balanced experiment that did
+# NOT have EWC, and changing ONLY ewc_lambda from 0.0 to 0.1.
+#
+# This is a clean A/B test:
+#
+#   | Parameter             | Original CL-balanced | This config (CL-balanced+EWC) |
+#   |-----------------------|----------------------|-------------------------------|
+#   | actor wake/sleep      | 0.5 / 0.005          | 0.5 / 0.005                   |
+#   | critic wake/sleep     | 0.5 / 0.3            | 0.5 / 0.3                     |
+#   | actor slow_window     | 500                  | 500                           |
+#   | critic slow_window    | 200                  | 200                           |
+#   | scale_floor / ceil    | 0.0 / 2.0            | 0.0 / 2.0                     |
+#   | ewc_lambda            | 0.0                  | 0.1                           |
+#   | (everything else)     | identical            | identical                     |
+#
+# Original CL-balanced result: actor 65% FROZEN, first degradation at
+# ep 11000, plateau at fitness 0.70 for 90k episodes.
+#
+# Background — why sleep=0.005 is the only sleep value that produces
+# freeze in this actor:
+# The TicTacToe actor's surprise EWMA has natural variance ~0.01-0.02
+# around 1.0 (driven by local_lambda=0.9999 + softsign + 3-layer topology).
+# Any sleep_fraction >= 0.01 places the freeze threshold (1 - sleep) above
+# the variance floor of fast/slow, so freeze never triggers. Only
+# sleep_fraction <= 0.005 reaches into the variance band and produces
+# occasional FROZEN windows. There is no continuous middle ground; this
+# is a binary threshold, not a dial. Empirical smoke tests at
+# sleep_fraction = 0.05 and 0.3 both produced 0% frozen.
+#
+# Hypothesis being tested:
+#   "Does adding EWC=0.1 to the original CL-balanced configuration
+#    meaningfully improve protection beyond the ~65% actor freeze?"
+#
+# Possible outcomes:
+#   - Drop delayed (>ep 11000) or eliminated → EWC adds protection
+#   - Drop at the same point (ep ~11000, fitness ~0.70) → EWC is irrelevant,
+#     all protection comes from the freeze
+#   - Drop earlier or worse → EWC interacts destructively (unlikely)
+#
+# Hypothesis being tested:
+#   "Does EWC alone (with active hysteresis cycling) preserve the champion,
+#    or is the protection in CL-max coming primarily from permanent freeze?"
+#
+# Expected outcomes:
+#   - If this run preserves fitness ≈ 0.95: EWC is the active protector,
+#     CL-max was over-conservative.
+#   - If this run degrades like the original CL-balanced (no EWC):
+#     freeze permanence was doing the protective work in CL-max, EWC alone
+#     is insufficient.
+#   - Intermediate (e.g. fitness ≈ 0.85): both mechanisms contribute.
+#
+# Compare against:
+#   - config_stress.toml          → CL-max (wake=2.0, sleep=0.005, ewc=0.1)
+#   - config_stress_cl_off.toml   → CL-off (true control, no CL active)
+#   - Original CL-balanced run    → wake=0.5, sleep=0.005, ewc=0 (no EWC)
+#
+# Use with: cargo run --release -- stress-test -c config_stress_cl_balanced.toml
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+td_steps = 5
+
+# M1 — Scale range (true freeze when low surprise, like CL-max)
+scale_floor = 0.0
+scale_ceil = 2.0
+
+# M2 — Hysteresis: identical to original CL-balanced run
+# wake = 0.5, sleep = 0.005 → ~65% actor frozen empirically
+# Same hysteresis as the run that degraded at ep 11000 with no EWC.
+# This config adds EWC on top to test EWC's marginal contribution.
+actor_hysteresis = true
+actor_fast_window = 20
+actor_slow_window = 500
+actor_wake_fraction = 0.5
+actor_sleep_fraction = 0.005
+
+critic_hysteresis = true
+critic_fast_window = 20
+critic_slow_window = 200
+critic_wake_fraction = 0.5
+critic_sleep_fraction = 0.3
+
+actor_wakes_critic = true
+actor_wakes_critic_threshold = 1000
+critic_wakes_actor = true
+critic_wakes_actor_threshold = 1000
+
+# M3 — Consolidation (same as CL-max)
+consolidation_decay = 0.95
+critic_consolidation_decay = 0.95
+adaptive_consolidation = true
+consolidation_ema_beta = 0.99
+consolidation_sigmoid_k = 10.0
+consolidation_error_threshold = 0.05
+
+# M4 — EWC enabled (same as CL-max)
+# Per-parameter Fisher protection. Key variable in this experiment.
+ewc_lambda = 0.1
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 500000
+checkpoint_interval = 5000
+log_interval = 1000
+seed = 42
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 500000
+random_side = true
+
+[stress_test]
+champion_path = "champion.json"
+opponent_depth_min = 1
+opponent_depth_max = 9
+max_episodes = 500000
+assessment_interval = 1000
+assessment_games = 200
+log_path = "stress_test_cl_balanced.csv"
+output_agent_path = "champion_post_stress_cl_balanced.json"
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760

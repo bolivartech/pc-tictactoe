@@ -16,16 +16,19 @@ scale_floor = 0.0
 scale_ceil = 2.0
 
 # M2 — Hysteresis
+# wake_fraction = 2.0: wake only on extreme error spikes (fast > 3× baseline)
+# sleep_fraction = 0.005: freeze on any micro-improvement (fast < 0.995× baseline)
+# Asymmetric deadband strongly favors staying FROZEN during stress.
 actor_hysteresis = true
 actor_fast_window = 20
-actor_slow_window = 200
-actor_wake_fraction = 0.5
-actor_sleep_fraction = 0.3
+actor_slow_window = 500
+actor_wake_fraction = 2.0
+actor_sleep_fraction = 0.005
 
 critic_hysteresis = true
 critic_fast_window = 20
 critic_slow_window = 200
-critic_wake_fraction = 0.5
+critic_wake_fraction = 2.0
 critic_sleep_fraction = 0.3
 
 actor_wakes_critic = true
@@ -41,8 +44,13 @@ consolidation_ema_beta = 0.99
 consolidation_sigmoid_k = 10.0
 consolidation_error_threshold = 0.05
 
-# M4 — EWC disabled
-ewc_lambda = 0.0
+# M4 — EWC enabled for per-parameter protection
+# Protects weights important for historical performance (e.g. P2 defensive
+# policy) against destructive gradients during alternating-side stress.
+# Complements hysteresis, which gates the whole network on a single signal.
+ewc_lambda = 0.1
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
 
 [agent.actor]
 input_size = 9
