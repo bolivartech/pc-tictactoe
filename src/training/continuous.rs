@@ -507,6 +507,7 @@ impl ContinuousTrainer {
         let outcome = self.episode_outcome();
         self.metrics.record(outcome);
 
+        let prev_depth = self.current_depth;
         let non_loss_rate = self.metrics.win_rate() + self.metrics.draw_rate();
         if self.metrics.count() >= self.metrics.window_size()
             && non_loss_rate > self.advance_threshold
@@ -515,9 +516,16 @@ impl ContinuousTrainer {
             self.current_depth += 1;
             self.minimax = MinimaxPlayer::new(self.current_depth);
             self.metrics.reset();
+
+            // [P2] Seal on first curriculum advance — mirrors `train()`.
+            // ChampionFinder drives via this path, so Phase 2 must be wired here too.
+            self.try_seal_on_first_advance(prev_depth);
         }
 
         self.episode_count += 1;
+
+        // [P2] Replay trigger interval-based — mirrors `train()`.
+        self.maybe_fire_replay();
     }
 
     /// Returns a mutable reference to the agent.
@@ -862,10 +870,8 @@ mod tests {
     #[test]
     fn test_train_one_episode_fires_seal_and_replay() {
         let mut trainer = build_test_trainer(
-            /* replay_training_capacity */ 256,
-            /* replay_interval */ 5,
-            /* advance_threshold */ 0.0,
-            /* window_size */ 1,
+            /* replay_training_capacity */ 256, /* replay_interval */ 5,
+            /* advance_threshold */ 0.0, /* window_size */ 1,
             /* max_episodes */ 100,
         );
         // When: drive the trainer via train_one_episode (ChampionFinder pattern).
