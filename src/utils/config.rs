@@ -322,6 +322,14 @@ pub struct TrainingSection {
     /// Random seed.
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// Episodios entre invocaciones de `replay_learn` cuando el replay buffer
+    /// esta activo (`agent.replay_training_capacity > 0`). Default: 100.
+    ///
+    /// Trade-off: valores bajos -> mas overhead de replay por run; valores altos
+    /// -> buffer mas sesgado por FIFO eviction en compartment B.
+    /// Ignorado silenciosamente si `replay_training_capacity == 0`.
+    #[serde(default = "default_replay_interval")]
+    pub replay_interval: usize,
 }
 
 /// Curriculum schedule configuration.
@@ -596,6 +604,11 @@ fn default_log_interval() -> usize {
 fn default_seed() -> u64 {
     42
 }
+/// Default episodios entre invocaciones de `replay_learn` cuando el
+/// replay buffer esta activo.
+fn default_replay_interval() -> usize {
+    100
+}
 fn default_advance_threshold() -> f64 {
     0.6
 }
@@ -800,6 +813,7 @@ impl Default for TrainingSection {
             checkpoint_interval: default_checkpoint_interval(),
             log_interval: default_log_interval(),
             seed: default_seed(),
+            replay_interval: default_replay_interval(),
         }
     }
 }
