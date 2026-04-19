@@ -251,7 +251,7 @@ El skill actualiza automaticamente: `current_task_id: "2"`, `current_phase: "red
 
 ---
 
-## Task 2: Validacion TOML (2 reglas)
+## Task 2: Validacion TOML (2 reglas) — ✅ COMPLETA
 
 **Alcance:** Agregar DOS reglas de validacion:
 1. Rechazar `replay_training_capacity > 0 && replay_interval == 0` (del plan original).
