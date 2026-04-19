@@ -719,4 +719,101 @@ mod tests {
         );
         assert_eq!(trainer.seal_attempts(), 0);
     }
+
+    // --- Task 5: Replay trigger interval-based ---
+
+    #[test]
+    fn test_scenario_4_1_replay_inactive_when_phase_2_off() {
+        // Given: Phase 2 off, replay_interval default
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 0,
+            /* replay_interval */ 100,
+            /* advance_threshold */ 0.0,
+            /* window_size */ 1,
+            /* max_episodes */ 200,
+        );
+        // When: run 200 episodes
+        trainer.train();
+        // Then: structural asserts — no PRNG bit-exact claim (MAGI amendment)
+        assert_eq!(trainer.replay_invocations(), 0);
+        assert!(!trainer.training_memories_sealed());
+        assert_eq!(trainer.seal_attempts(), 0);
+        assert!(!trainer.replay_enabled(), "replay_enabled should be false when capacity=0");
+    }
+
+    #[test]
+    fn test_scenario_4_2_replay_active_fires_at_intervals() {
+        // Given: Phase 2 active, replay_interval = 10, threshold=0.0 to force early advance
+        // (per Task 4 lessons: trivial threshold + window=1 guarantees advance)
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 256,
+            /* replay_interval */ 10,
+            /* advance_threshold */ 0.0,
+            /* window_size */ 1,
+            /* max_episodes */ 100,
+        );
+        // When: run 100 episodes (advance + seal expected early, then replays)
+        trainer.train();
+        // Then: sealed == true, invocations > 0, invocations <= 10 (max 100/10)
+        assert!(
+            trainer.training_memories_sealed(),
+            "sealed should be true after advance"
+        );
+        assert!(
+            trainer.replay_invocations() > 0,
+            "replay should have been invoked at least once post-seal"
+        );
+        assert!(
+            trainer.replay_invocations() <= 10,
+            "replay_invocations ({}) exceeds theoretical max (100/10=10)",
+            trainer.replay_invocations()
+        );
+    }
+
+    #[test]
+    fn test_scenario_4_4_replay_deferred_before_seal() {
+        // Given: Phase 2 active, replay_interval = 5, advance_threshold impossible
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 256,
+            /* replay_interval */ 5,
+            /* advance_threshold */ 0.999,
+            /* window_size */ 100,
+            /* max_episodes */ 50,
+        );
+        // When: run 50 episodes without advance
+        trainer.train();
+        // Then: warmup B respected — no seal, no replay
+        assert!(!trainer.training_memories_sealed());
+        assert_eq!(trainer.seal_attempts(), 0);
+        assert_eq!(
+            trainer.replay_invocations(),
+            0,
+            "replay must not be invoked without seal"
+        );
+    }
+
+    // [MAGI Checkpoint 2 amendment] Document Scenario 4.8 coverage:
+    // replay_learn handles adversarial inputs gracefully (no-op, no panic).
+    #[test]
+    fn test_replay_learn_ok_on_adversarial_batch() {
+        use crate::utils::config::AppConfig;
+        use pc_rl_core::linalg::cpu::CpuLinAlg;
+        use pc_rl_core::pc_actor_critic::PcActorCritic;
+
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 64;
+        config.agent.replay_batch_size = 32;
+        let agent_config = config.to_agent_config().unwrap();
+        let mut agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+
+        // When: invoke replay_learn on empty buffer
+        let result_empty = agent.replay_learn(32);
+        // Then: Ok silently (core contract — safe on startup)
+        assert!(result_empty.is_ok(), "replay_learn should return Ok on empty buffer");
+
+        // When: invoke with batch_size = 0
+        let result_zero = agent.replay_learn(0);
+        // Then: Ok silently
+        assert!(result_zero.is_ok(), "replay_learn should return Ok with batch_size=0");
+    }
 }
