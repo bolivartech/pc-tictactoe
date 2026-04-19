@@ -433,7 +433,7 @@ git commit -m "chore: mark task 2 complete"
 
 ---
 
-## Task 3: Fields + constructor + getters en `ContinuousTrainer`
+## Task 3: Fields + constructor + 4 getters en ContinuousTrainer — ✅ COMPLETA
 
 **Alcance:** Agregar los **6 fields** nuevos al struct, inicializarlos desde `AppConfig` en `new()`, exponer **4 getters** (`replay_invocations`, `training_memories_sealed`, `seal_attempts`, `replay_enabled`). Sin logica de replay en `train()` todavia.
 
