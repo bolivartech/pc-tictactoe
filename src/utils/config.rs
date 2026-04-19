@@ -173,6 +173,55 @@ pub struct AgentSection {
     /// Use reversed logits for actor Fisher estimation.
     #[serde(default)]
     pub logits_reversal: bool,
+    // ─── Phase 2 — Self-recovery (distillation + replay) ───────────────────
+    //
+    // Orchestration status (2026-04-18): the Phase 2 APIs shipped by
+    // `pc-rl-core` (`replay_learn`, `seal_replay_training_memories`,
+    // `clear_recent_memories`, `rollback_soft`, `rollback_hard`,
+    // `champion_update`) are NOT yet called anywhere inside this crate.
+    // Setting the fields below is sufficient to allocate the replay buffer
+    // and distillation anchors inside `PcActorCritic`, and `step_masked()`
+    // will auto-record transitions into the buffer. However, the buffer will
+    // simply fill up and never be consumed until a future trainer loop
+    // invokes `replay_learn()`; the frozen champion anchor will track the
+    // live actor only via initial copy and on explicit `champion_update()`
+    // calls (see `src/training/continuous.rs` TODO for where this hookup
+    // belongs). Enabling `replay_*` without downstream orchestration is
+    // therefore inert for online learning — valid for compile/smoke tests,
+    // but not for evaluating the "self-recovery" behavior described in the
+    // `pc-rl-core` CHANGELOG.
+    /// KL distillation strength toward the Polyak-averaged target actor.
+    /// 0.0 disables the Polyak target and allocates no slot. Pair with
+    /// `polyak_tau` when > 0.
+    ///
+    /// Active in continuous mode only (`step_masked()` / `replay_learn()`).
+    #[serde(default)]
+    pub distillation_lambda_polyak: f64,
+    /// Polyak averaging rate (`target = (1-tau)*target + tau*live`) used
+    /// when `distillation_lambda_polyak > 0`. Must be in (0.0, 1.0].
+    #[serde(default = "default_polyak_tau")]
+    pub polyak_tau: f64,
+    /// KL distillation strength toward the frozen champion anchor.
+    /// 0.0 disables the frozen slot. Updated only by explicit
+    /// `champion_update()` calls; recovered via `rollback_hard()`.
+    #[serde(default)]
+    pub distillation_lambda_frozen: f64,
+    /// Capacity of the training-phase replay compartment (compartment A,
+    /// immutable after `seal_replay_training_memories()`). 0 disables the
+    /// replay buffer entirely.
+    #[serde(default)]
+    pub replay_training_capacity: usize,
+    /// Capacity of the recent-stress replay compartment (compartment B,
+    /// FIFO eviction). 0 disables stress-phase recording.
+    #[serde(default)]
+    pub replay_recent_capacity: usize,
+    /// If true, only transitions with reward > 0 are stored in the replay
+    /// buffer. Default: true.
+    #[serde(default = "default_replay_positive_only")]
+    pub replay_positive_only: bool,
+    /// Batch size for each `replay_learn()` call. Default: 64.
+    #[serde(default = "default_replay_batch_size")]
+    pub replay_batch_size: usize,
 }
 
 /// Actor network configuration section.
@@ -613,6 +662,15 @@ fn default_fisher_decay() -> f64 {
 fn default_fisher_ema_beta() -> f64 {
     0.99
 }
+fn default_polyak_tau() -> f64 {
+    0.005
+}
+fn default_replay_positive_only() -> bool {
+    true
+}
+fn default_replay_batch_size() -> usize {
+    64
+}
 fn default_stress_champion_path() -> String {
     "champion.json".to_string()
 }
@@ -692,6 +750,13 @@ impl Default for AgentSection {
             fisher_decay: default_fisher_decay(),
             fisher_ema_beta: default_fisher_ema_beta(),
             logits_reversal: false,
+            distillation_lambda_polyak: 0.0,
+            polyak_tau: default_polyak_tau(),
+            distillation_lambda_frozen: 0.0,
+            replay_training_capacity: 0,
+            replay_recent_capacity: 0,
+            replay_positive_only: default_replay_positive_only(),
+            replay_batch_size: default_replay_batch_size(),
         }
     }
 }
@@ -995,6 +1060,45 @@ impl AppConfig {
             });
         }
 
+        // Phase 2: distillation + replay
+        if a.distillation_lambda_polyak < 0.0 {
+            return Err(ConfigError {
+                message: format!(
+                    "distillation_lambda_polyak ({}) must be >= 0.0",
+                    a.distillation_lambda_polyak
+                ),
+            });
+        }
+        if a.distillation_lambda_frozen < 0.0 {
+            return Err(ConfigError {
+                message: format!(
+                    "distillation_lambda_frozen ({}) must be >= 0.0",
+                    a.distillation_lambda_frozen
+                ),
+            });
+        }
+        if a.distillation_lambda_polyak > 0.0 && (a.polyak_tau <= 0.0 || a.polyak_tau > 1.0) {
+            return Err(ConfigError {
+                message: format!(
+                    "polyak_tau ({}) must be in (0.0, 1.0] when distillation_lambda_polyak > 0",
+                    a.polyak_tau
+                ),
+            });
+        }
+        if a.replay_training_capacity == 0 && a.replay_recent_capacity > 0 {
+            return Err(ConfigError {
+                message: "replay_recent_capacity > 0 requires replay_training_capacity > 0"
+                    .to_string(),
+            });
+        }
+        if (a.replay_training_capacity > 0 || a.replay_recent_capacity > 0)
+            && a.replay_batch_size == 0
+        {
+            return Err(ConfigError {
+                message: "replay_batch_size must be > 0 when replay buffer is enabled".to_string(),
+            });
+        }
+
         Ok(())
     }
 
@@ -1190,10 +1294,13 @@ impl AppConfig {
             fisher_decay: self.agent.fisher_decay,
             fisher_ema_beta: self.agent.fisher_ema_beta,
             logits_reversal: self.agent.logits_reversal,
-            // Phase 1 self-recovery — no-op defaults until TOML plumbing lands.
-            distillation_lambda_polyak: 0.0,
-            polyak_tau: 0.005,
-            distillation_lambda_frozen: 0.0,
+            distillation_lambda_polyak: self.agent.distillation_lambda_polyak,
+            polyak_tau: self.agent.polyak_tau,
+            distillation_lambda_frozen: self.agent.distillation_lambda_frozen,
+            replay_training_capacity: self.agent.replay_training_capacity,
+            replay_recent_capacity: self.agent.replay_recent_capacity,
+            replay_positive_only: self.agent.replay_positive_only,
+            replay_batch_size: self.agent.replay_batch_size,
         })
     }
 
@@ -1692,6 +1799,124 @@ min_depth_filter = 6
         let path = "same_path.json".to_string();
         config.stress_test.champion_path = path.clone();
         config.stress_test.output_agent_path = path;
+        assert!(config.validate().is_err());
+    }
+
+    // ─── Phase 2 — distillation + replay ──────────────────────────────────────
+
+    #[test]
+    fn test_phase2_fields_default_to_disabled() {
+        let config = AppConfig::default();
+        assert!((config.agent.distillation_lambda_polyak - 0.0).abs() < 1e-12);
+        assert!((config.agent.polyak_tau - 0.005).abs() < 1e-12);
+        assert!((config.agent.distillation_lambda_frozen - 0.0).abs() < 1e-12);
+        assert_eq!(config.agent.replay_training_capacity, 0);
+        assert_eq!(config.agent.replay_recent_capacity, 0);
+        assert!(config.agent.replay_positive_only);
+        assert_eq!(config.agent.replay_batch_size, 64);
+    }
+
+    #[test]
+    fn test_phase2_fields_parse_from_toml() {
+        let toml_str = r#"
+[agent]
+distillation_lambda_polyak = 0.1
+polyak_tau = 0.01
+distillation_lambda_frozen = 0.05
+replay_training_capacity = 1024
+replay_recent_capacity = 256
+replay_positive_only = false
+replay_batch_size = 32
+
+[agent.actor]
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "tanh"
+
+[agent.critic]
+input_size = 27
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "tanh"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!((config.agent.distillation_lambda_polyak - 0.1).abs() < 1e-12);
+        assert!((config.agent.polyak_tau - 0.01).abs() < 1e-12);
+        assert!((config.agent.distillation_lambda_frozen - 0.05).abs() < 1e-12);
+        assert_eq!(config.agent.replay_training_capacity, 1024);
+        assert_eq!(config.agent.replay_recent_capacity, 256);
+        assert!(!config.agent.replay_positive_only);
+        assert_eq!(config.agent.replay_batch_size, 32);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_to_agent_config_passes_phase2_fields() {
+        let mut config = AppConfig::default();
+        config.agent.distillation_lambda_polyak = 0.2;
+        config.agent.polyak_tau = 0.02;
+        config.agent.distillation_lambda_frozen = 0.1;
+        config.agent.replay_training_capacity = 512;
+        config.agent.replay_recent_capacity = 128;
+        config.agent.replay_positive_only = false;
+        config.agent.replay_batch_size = 16;
+        let ac = config.to_agent_config().unwrap();
+        assert!((ac.distillation_lambda_polyak - 0.2).abs() < 1e-12);
+        assert!((ac.polyak_tau - 0.02).abs() < 1e-12);
+        assert!((ac.distillation_lambda_frozen - 0.1).abs() < 1e-12);
+        assert_eq!(ac.replay_training_capacity, 512);
+        assert_eq!(ac.replay_recent_capacity, 128);
+        assert!(!ac.replay_positive_only);
+        assert_eq!(ac.replay_batch_size, 16);
+    }
+
+    #[test]
+    fn test_phase2_validation_rejects_negative_polyak_lambda() {
+        let mut config = AppConfig::default();
+        config.agent.distillation_lambda_polyak = -0.01;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_phase2_validation_rejects_negative_frozen_lambda() {
+        let mut config = AppConfig::default();
+        config.agent.distillation_lambda_frozen = -0.01;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_phase2_validation_rejects_polyak_tau_out_of_range_when_active() {
+        let mut config = AppConfig::default();
+        config.agent.distillation_lambda_polyak = 0.1;
+        config.agent.polyak_tau = 0.0;
+        assert!(config.validate().is_err());
+
+        config.agent.polyak_tau = 1.5;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_phase2_validation_allows_invalid_polyak_tau_when_lambda_zero() {
+        let mut config = AppConfig::default();
+        // Out-of-range tau is ignored because Polyak is off.
+        config.agent.distillation_lambda_polyak = 0.0;
+        config.agent.polyak_tau = 0.0;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_phase2_validation_rejects_recent_without_training() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 0;
+        config.agent.replay_recent_capacity = 100;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_phase2_validation_rejects_zero_batch_with_buffer_enabled() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 100;
+        config.agent.replay_batch_size = 0;
         assert!(config.validate().is_err());
     }
 }

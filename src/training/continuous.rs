@@ -9,6 +9,26 @@
 //! [`PcActorCritic::step_masked()`] for combined inference and TD(0)
 //! learning — surprise-driven plasticity is handled internally by the
 //! core library. Includes curriculum learning with depth advancement.
+//!
+//! # Phase 2 self-recovery orchestration (TODO)
+//!
+//! The Phase 2 APIs shipped by `pc-rl-core` — `replay_learn`,
+//! `seal_replay_training_memories`, `clear_recent_memories`,
+//! `rollback_soft`, `rollback_hard`, `champion_update` — are NOT yet wired
+//! into this trainer loop. Setting the Phase 2 TOML fields
+//! (`replay_training_capacity`, `distillation_lambda_polyak`,
+//! `distillation_lambda_frozen`, etc.) currently:
+//!
+//! - allocates the replay buffer and distillation anchors inside the core,
+//! - lets `step_masked()` auto-record transitions and apply KL distillation
+//!   gradients against live anchors,
+//! - but never calls `replay_learn()` to consume the buffer, and
+//! - never calls `champion_update()` / `rollback_*()` for recovery.
+//!
+//! "Compiles and runs" is not "integrated". A future phase must hook these
+//! APIs into the trainer (likely gated by fitness-drift detection via the
+//! curriculum advancement signal) before the self-recovery behavior
+//! described in the `pc-rl-core` CHANGELOG is actually exercised.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

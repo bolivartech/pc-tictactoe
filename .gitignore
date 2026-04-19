@@ -1,14 +1,14 @@
 # Build
 /target
-.claude/tdd-guard/data/
 Cargo.lock
 
-# Claude Files
+# Claude Code — todo local al desarrollador, no se trackea
+# (politica de tracking: ver CLAUDE.local.md §1 "Politica de tracking")
 .claude/
 CLAUDE.md
 CLAUDE.local.md
 
-# Superpowers
+# Superpowers (docs locales)
 docs/superpowers/
 
 # IDE Files
@@ -16,18 +16,11 @@ docs/superpowers/
 *.swp
 *.swo
 
-# Model files
+# Model files (experiment artifacts)
 model.json
 *.json.bak
 
-# Session files
+# Session / experiment artifacts
 .remember/
 experiment.txt
 Experiments/
-
-# Ralph-Loop
-/plans
-/scripts
-/planning
-BLOCKED.md
-run-tests.sh
