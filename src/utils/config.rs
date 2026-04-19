@@ -1919,4 +1919,31 @@ activation = "tanh"
         config.agent.replay_batch_size = 0;
         assert!(config.validate().is_err());
     }
+
+    #[test]
+    fn test_replay_interval_default_is_100() {
+        let config = AppConfig::default();
+        assert_eq!(config.training.replay_interval, 100);
+    }
+
+    #[test]
+    fn test_replay_interval_parses_from_toml() {
+        let toml_str = r#"
+[agent]
+[agent.actor]
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "tanh"
+[agent.critic]
+input_size = 27
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "tanh"
+[training]
+replay_interval = 250
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.training.replay_interval, 250);
+        assert!(config.validate().is_ok());
+    }
 }
