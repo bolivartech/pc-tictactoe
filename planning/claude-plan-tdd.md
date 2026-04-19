@@ -928,7 +928,7 @@ git commit -m "chore: mark task 4 complete"
 
 ---
 
-## Task 5: Replay trigger interval-based
+## Task 5: Replay trigger interval-based — ✅ COMPLETA
 
 **Alcance:** Invocar `agent.replay_learn(batch_size)` cada `replay_interval` episodios cuando `sealed == true && replay_interval > 0`. Incrementar `replay_invocations` on Ok. Error handling log-warn-skip.
 
