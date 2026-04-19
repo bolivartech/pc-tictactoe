@@ -62,7 +62,7 @@ Si el seed no advanza dentro de 50 episodios, ajustar `advance_threshold` hacia 
 
 ---
 
-## Task 1: Campo `replay_interval` en `TrainingSection`
+## Task 1: Campo `replay_interval` en `TrainingSection` — ✅ COMPLETA
 
 **Alcance:** Agregar el field nuevo al TOML config, helper de default, actualizar `impl Default`. Sin validacion todavia (Tarea 2).
 
