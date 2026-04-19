@@ -680,7 +680,7 @@ git commit -m "chore: mark task 3 complete"
 
 ---
 
-## Task 4: Seal al primer curriculum advance
+## Task 4: Seal al primer curriculum advance — ✅ COMPLETA
 
 **Alcance:** Invocar `agent.seal_replay_training_memories()` en el primer curriculum advance cuando `replay_enabled && !sealed`. Idempotencia via el flag `sealed`. Error handling log-warn-skip.
 
