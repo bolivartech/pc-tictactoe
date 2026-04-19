@@ -632,4 +632,47 @@ mod tests {
             "replay_enabled should be true when capacity>0"
         );
     }
+
+    #[test]
+    fn test_scenario_4_3_seal_only_once_on_first_advance() {
+        // Given: Phase 2 active, easy curriculum to force early advance
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 256, /* replay_interval */ 100,
+            /* advance_threshold */ 0.30, /* window_size */ 20,
+            /* max_episodes */ 200,
+        );
+        // When: run until max_episodes (expecting multiple advances)
+        trainer.train();
+        // Then: sealed == true after the first advance
+        assert!(
+            trainer.training_memories_sealed(),
+            "sealed should be true after curriculum advance"
+        );
+        // Idempotency check: seal_attempts counter increments inside the
+        // `if !sealed` block. After the first Ok, the flag prevents re-entry
+        // on subsequent advances — counter stays at 1 exact.
+        assert_eq!(
+            trainer.seal_attempts(),
+            1,
+            "seal_attempts should be exactly 1 — idempotency guaranteed by the flag guard"
+        );
+    }
+
+    #[test]
+    fn test_scenario_4_4_sealed_false_before_first_advance() {
+        // Given: Phase 2 active, advance_threshold impossible in short tests
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 256, /* replay_interval */ 5,
+            /* advance_threshold */ 0.999, /* window_size */ 100,
+            /* max_episodes */ 50,
+        );
+        // When: run 50 episodes without advance
+        trainer.train();
+        // Then: sealed remains false, no seal attempts
+        assert!(
+            !trainer.training_memories_sealed(),
+            "sealed should remain false without advance"
+        );
+        assert_eq!(trainer.seal_attempts(), 0);
+    }
 }
