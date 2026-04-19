@@ -98,6 +98,28 @@ pub struct ContinuousTrainer {
     rng: rand::rngs::ThreadRng,
     /// Agent side for the current episode (set by run_episode, read by episode_outcome).
     last_agent_side: Player,
+    /// True iff `config.agent.replay_training_capacity > 0` at construction.
+    /// Cached to avoid per-iteration config lookups and coupling to agent internals.
+    replay_enabled: bool,
+    /// Number of episodes between `replay_learn` invocations (from `config.training.replay_interval`).
+    /// Ignored when `replay_enabled == false`.
+    /// Used in Task 5 (replay trigger); suppressed until then.
+    #[allow(dead_code)]
+    replay_interval: usize,
+    /// Batch size for each `replay_learn` call (from `config.agent.replay_batch_size`).
+    /// Used in Task 5 (replay trigger); suppressed until then.
+    #[allow(dead_code)]
+    replay_batch_size: usize,
+    /// `true` after the first successful `seal_replay_training_memories()` call.
+    /// Warmup gate — `replay_learn` is not invoked until this is `true`.
+    training_memories_sealed: bool,
+    /// Counter of successful (`Ok`) `replay_learn` invocations. Diagnostic.
+    replay_invocations: usize,
+    /// Counter of seal attempts (both Ok and Err). Increments inside the
+    /// `if !sealed && replay_enabled` block. Once the first attempt succeeds
+    /// and the flag flips, subsequent advances skip the block — counter stays at 1.
+    /// Used for precise idempotency verification in Scenario 4.3.
+    seal_attempts: usize,
 }
 
 impl ContinuousTrainer {
@@ -129,6 +151,12 @@ impl ContinuousTrainer {
             random_side: config.continuous.random_side,
             rng: rand::thread_rng(),
             last_agent_side: Player::One,
+            replay_enabled: config.agent.replay_training_capacity > 0,
+            replay_interval: config.training.replay_interval,
+            replay_batch_size: config.agent.replay_batch_size,
+            training_memories_sealed: false,
+            replay_invocations: 0,
+            seal_attempts: 0,
         }
     }
 
@@ -288,6 +316,42 @@ impl ContinuousTrainer {
     /// Returns the current curriculum depth.
     pub fn current_depth(&self) -> usize {
         self.current_depth
+    }
+
+    /// Returns the count of successful `replay_learn` invocations since construction.
+    ///
+    /// Primarily for testing and diagnostic purposes.
+    pub fn replay_invocations(&self) -> usize {
+        self.replay_invocations
+    }
+
+    /// Returns `true` after the first successful `seal_replay_training_memories()` call.
+    ///
+    /// Acts as the warmup gate for `replay_learn`; `false` until the seal succeeds.
+    /// Primarily for testing and diagnostic purposes.
+    pub fn training_memories_sealed(&self) -> bool {
+        self.training_memories_sealed
+    }
+
+    /// Returns the count of seal attempts (Ok + Err combined).
+    ///
+    /// After the first Ok, the `training_memories_sealed` flag prevents re-entry;
+    /// `seal_attempts` stays at 1 if the first attempt succeeded. If the first
+    /// attempt returned Err, this can increment until a subsequent advance succeeds.
+    ///
+    /// Primarily for testing (Scenario 4.3 idempotency verification).
+    pub fn seal_attempts(&self) -> usize {
+        self.seal_attempts
+    }
+
+    /// Returns `true` when `config.agent.replay_training_capacity > 0` at construction.
+    ///
+    /// Lets callers determine whether the trainer was built with Phase 2 active
+    /// without re-reading the config or coupling to agent internals.
+    ///
+    /// Primarily for testing and diagnostic purposes.
+    pub fn replay_enabled(&self) -> bool {
+        self.replay_enabled
     }
 
     /// Returns a reference to the metrics tracker.
@@ -540,30 +604,32 @@ mod tests {
     #[test]
     fn test_trainer_construction_phase2_off_initial_state() {
         let trainer = build_test_trainer(
-            /* replay_training_capacity */ 0,
-            /* replay_interval */ 100,
-            /* advance_threshold */ 0.95,
-            /* window_size */ 100,
+            /* replay_training_capacity */ 0, /* replay_interval */ 100,
+            /* advance_threshold */ 0.95, /* window_size */ 100,
             /* max_episodes */ 200,
         );
         assert_eq!(trainer.replay_invocations(), 0);
         assert!(!trainer.training_memories_sealed());
         assert_eq!(trainer.seal_attempts(), 0);
-        assert!(!trainer.replay_enabled(), "replay_enabled should be false when capacity=0");
+        assert!(
+            !trainer.replay_enabled(),
+            "replay_enabled should be false when capacity=0"
+        );
     }
 
     #[test]
     fn test_trainer_construction_phase2_on_initial_state() {
         let trainer = build_test_trainer(
-            /* replay_training_capacity */ 256,
-            /* replay_interval */ 50,
-            /* advance_threshold */ 0.30,
-            /* window_size */ 20,
+            /* replay_training_capacity */ 256, /* replay_interval */ 50,
+            /* advance_threshold */ 0.30, /* window_size */ 20,
             /* max_episodes */ 100,
         );
         assert_eq!(trainer.replay_invocations(), 0);
         assert!(!trainer.training_memories_sealed());
         assert_eq!(trainer.seal_attempts(), 0);
-        assert!(trainer.replay_enabled(), "replay_enabled should be true when capacity>0");
+        assert!(
+            trainer.replay_enabled(),
+            "replay_enabled should be true when capacity>0"
+        );
     }
 }
