@@ -450,6 +450,16 @@ impl ContinuousTrainer {
     /// On `Ok`: increments `replay_invocations` and emits a diagnostic `eprintln!`.
     /// On `Err`: emits a warn-level `eprintln!` and skips (no panic, no log_lines push —
     /// this is a hot path that fires every `replay_interval` episodes).
+    // Logging convention: project uses `eprintln!` as the stand-in for
+    // `log::info!` / `log::warn!` — the `log` crate is not a project dep
+    // (see Cargo.toml). Curriculum-advance banner at `train()` follows the
+    // same pattern. Replay Ok path is hot (fires every `replay_interval`
+    // episodes) so no `log_lines.push`. Replay Err path is cold and
+    // diagnostically valuable — pushes to `log_lines` for post-hoc test/
+    // experiment inspection.
+    //
+    // See `PcActorCritic::replay_learn` in pc-rl-core: safe on empty buffer
+    // by contract (returns `Ok(())`), so Err is expected to be rare.
     fn maybe_fire_replay(&mut self) {
         if !self.training_memories_sealed
             || self.replay_interval == 0
@@ -466,10 +476,12 @@ impl ContinuousTrainer {
                 );
             }
             Err(e) => {
-                eprintln!(
+                let line = format!(
                     "[ep {}] replay_learn failed: {} (skipped)",
                     self.episode_count, e,
                 );
+                eprintln!("{line}");
+                self.log_lines.push(line);
             }
         }
     }
@@ -722,6 +734,10 @@ mod tests {
     fn test_scenario_4_3_seal_only_once_on_first_advance() {
         // Given: Phase 2 active, trivially easy curriculum (threshold=0.0, window=1)
         // so the first episode always triggers the first advance.
+        // Thresholds relaxed from spec §4.3 (0.30/20 → 0.0/1) per plan P.2b
+        // determinism precheck. With 0.0/1, advance pressure is maximum (every
+        // non-loss advances), which actually yields a STRONGER idempotency
+        // test than the spec'd 0.30/20 — many advances, seal_attempts still == 1.
         let mut trainer = build_test_trainer(
             /* replay_training_capacity */ 256, /* replay_interval */ 100,
             /* advance_threshold */ 0.0, /* window_size */ 1,
@@ -766,7 +782,10 @@ mod tests {
 
     #[test]
     fn test_scenario_4_1_replay_inactive_when_phase_2_off() {
-        // Given: Phase 2 off, replay_interval default
+        // Given: Phase 2 off, replay_interval default.
+        // Threshold=0.0, window=1 — same pragmatic relaxation as 4.2 (see plan
+        // P.2b determinism precheck). Phase 2 off means advance firing is
+        // orthogonal to replay invariants; any advance pattern is acceptable.
         let mut trainer = build_test_trainer(
             /* replay_training_capacity */ 0, /* replay_interval */ 100,
             /* advance_threshold */ 0.0, /* window_size */ 1,
@@ -786,8 +805,12 @@ mod tests {
 
     #[test]
     fn test_scenario_4_2_replay_active_fires_at_intervals() {
-        // Given: Phase 2 active, replay_interval = 10, threshold=0.0 to force early advance
-        // (per Task 4 lessons: trivial threshold + window=1 guarantees advance)
+        // Given: Phase 2 active, replay_interval = 10.
+        // Thresholds deliberately relaxed from spec §4.2 (0.30/20 → 0.0/1) per
+        // plan P.2b determinism precheck — under-trained agent vs depth-1 does
+        // not reliably reach 30% non-loss in 20-episode windows. With 0.0/1,
+        // any single non-loss outcome triggers advance on ep 1+. Test still
+        // validates: (a) seal post-advance, (b) replay fires at interval bound.
         let mut trainer = build_test_trainer(
             /* replay_training_capacity */ 256, /* replay_interval */ 10,
             /* advance_threshold */ 0.0, /* window_size */ 1,
@@ -808,6 +831,17 @@ mod tests {
             trainer.replay_invocations() <= 10,
             "replay_invocations ({}) exceeds theoretical max (100/10=10)",
             trainer.replay_invocations()
+        );
+        // [Loop 1 W2] Spec §4.2 requires "replay training memories sealed"
+        // log substring. The seal line is in log_lines (try_seal_on_first_advance
+        // pushes it). Replay Ok line only goes to stderr (hot path — no
+        // log_lines.push). Verify the seal substring that IS captured.
+        assert!(
+            trainer
+                .log_lines()
+                .iter()
+                .any(|l| l.contains("replay training memories sealed")),
+            "log_lines must contain 'replay training memories sealed' per spec §4.2"
         );
     }
 
