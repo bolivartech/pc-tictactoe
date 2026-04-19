@@ -1,0 +1,125 @@
+# Seed-test P1+P2 — Phase 1 (distillation anchors) + Phase 2
+#                    (replay buffer) BOTH ENABLED.
+#
+# Full self-recovery stack active. Compare against config_seedtest_p1.toml
+# for the Phase 2 marginal effect (replay buffer auto-record + distillation
+# gradient propagated through replay updates).
+#
+# Usage:
+#   cargo run --release -- seed-test -c config_seedtest_p1p2.toml --n 35 --continuous
+#
+# Skeleton matches config_cl_experiment.toml (3-layer [27,27,18] softsign
+# + residual, GAE(1.0), 200k episodes, alternating sides).
+#
+# >>> IMPORTANT — replay_learn() is NOT called by the trainer loop yet <<<
+# (see src/training/continuous.rs §"Phase 2 self-recovery orchestration").
+# The replay buffer AUTO-RECORDS transitions from step_masked() but IS
+# NEVER CONSUMED in these runs. In effect this config is "P1 ON +
+# P2 buffer allocated but dormant", not "P2 replay actively training
+# the agent". Expected marginal effect vs config_seedtest_p1.toml is
+# near-zero aside from buffer memory overhead — framed positively, this
+# run measures the "do no harm" property of Phase 2 allocation under a
+# realistic training distribution.
+#
+# Real replay behavior requires wiring replay_learn() into the trainer
+# (likely gated by curriculum advancement or fitness-drift detection).
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+# ── GAE(λ) ───────────────────────────────────────────────────────
+td_steps = 0
+gae_lambda = 1.0
+
+# ── M1 — legacy scale range ─────────────────────────────────────
+scale_floor = 0.1
+scale_ceil = 2.0
+
+# ── M2 DISABLED ─────────────────────────────────────────────────
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
+
+# ── M3 DISABLED ─────────────────────────────────────────────────
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+
+# ── M4 DISABLED ─────────────────────────────────────────────────
+ewc_lambda = 0.0
+
+# ── Phase 1 (distillation anchors) — ENABLED ────────────────────
+distillation_lambda_polyak = 0.01
+polyak_tau = 0.005
+distillation_lambda_frozen = 0.01
+
+# ── Phase 2 (replay buffer) — ENABLED ───────────────────────────
+replay_training_capacity = 2048
+replay_recent_capacity = 512
+replay_positive_only = true
+replay_batch_size = 64
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 200000
+checkpoint_interval = 5000
+log_interval = 500
+seed = 42
+# Phase 2 integrated (Option B): replay_learn fires every N episodes after
+# first curriculum advance (seal). Default 100; explicit here for empirical
+# test per spec §10.2 Scenario 4.9.
+replay_interval = 100
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 200000
+random_side = false
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760
