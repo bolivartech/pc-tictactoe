@@ -853,4 +853,38 @@ mod tests {
             "replay_learn should return Ok with batch_size=0"
         );
     }
+
+    /// [Loop 1 review C2] `train_one_episode()` is the entry point used by
+    /// `ChampionFinder` (`src/training/champion.rs:193`). Spec §5.3 X5 claimed
+    /// champion inherits seal + replay behavior automatically — but the
+    /// single-episode path must itself invoke the helpers. This test locks
+    /// the invariant so champion-driven training fires seal + replay.
+    #[test]
+    fn test_train_one_episode_fires_seal_and_replay() {
+        let mut trainer = build_test_trainer(
+            /* replay_training_capacity */ 256,
+            /* replay_interval */ 5,
+            /* advance_threshold */ 0.0,
+            /* window_size */ 1,
+            /* max_episodes */ 100,
+        );
+        // When: drive the trainer via train_one_episode (ChampionFinder pattern).
+        for _ in 0..50 {
+            trainer.train_one_episode();
+        }
+        // Then: seal fires on first advance, replay fires at interval multiples.
+        assert!(
+            trainer.training_memories_sealed(),
+            "sealed must be true after train_one_episode drives the advance"
+        );
+        assert_eq!(
+            trainer.seal_attempts(),
+            1,
+            "seal_attempts must be exactly 1 (idempotency via flag guard)"
+        );
+        assert!(
+            trainer.replay_invocations() > 0,
+            "replay_learn must fire on interval multiples post-seal"
+        );
+    }
 }
