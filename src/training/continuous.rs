@@ -185,31 +185,7 @@ impl ContinuousTrainer {
 
             self.episode_count += 1;
 
-            // [P2] Replay trigger interval-based (post-warmup).
-            // Gate: only fires after seal (warmup B per spec §3.5).
-            // NO log_lines.push here — this is a hot path (fires every replay_interval eps).
-            if self.training_memories_sealed
-                && self.replay_interval > 0
-                && self.episode_count.is_multiple_of(self.replay_interval)
-            {
-                match self.agent.replay_learn(self.replay_batch_size) {
-                    Ok(()) => {
-                        self.replay_invocations += 1;
-                        eprintln!(
-                            "[ep {}] replay_learn batch={} (invocation #{})",
-                            self.episode_count,
-                            self.replay_batch_size,
-                            self.replay_invocations,
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[ep {}] replay_learn failed: {} (skipped)",
-                            self.episode_count, e,
-                        );
-                    }
-                }
-            }
+            self.maybe_fire_replay();
 
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
                 let cl_info = self.cl_status_string();
@@ -458,6 +434,42 @@ impl ContinuousTrainer {
                 );
                 eprintln!("{line}");
                 self.log_lines.push(line);
+            }
+        }
+    }
+
+    /// Fires `replay_learn` at the configured interval after the warmup seal.
+    ///
+    /// Called once per episode (inside the `train()` loop, after `episode_count`
+    /// has been incremented). Guards:
+    ///
+    /// 1. `training_memories_sealed` — the warmup gate; no replay before first advance.
+    /// 2. `replay_interval > 0` — zero disables interval-based replay.
+    /// 3. `episode_count % replay_interval == 0` — interval alignment.
+    ///
+    /// On `Ok`: increments `replay_invocations` and emits a diagnostic `eprintln!`.
+    /// On `Err`: emits a warn-level `eprintln!` and skips (no panic, no log_lines push —
+    /// this is a hot path that fires every `replay_interval` episodes).
+    fn maybe_fire_replay(&mut self) {
+        if !self.training_memories_sealed
+            || self.replay_interval == 0
+            || !self.episode_count.is_multiple_of(self.replay_interval)
+        {
+            return;
+        }
+        match self.agent.replay_learn(self.replay_batch_size) {
+            Ok(()) => {
+                self.replay_invocations += 1;
+                eprintln!(
+                    "[ep {}] replay_learn batch={} (invocation #{})",
+                    self.episode_count, self.replay_batch_size, self.replay_invocations,
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[ep {}] replay_learn failed: {} (skipped)",
+                    self.episode_count, e,
+                );
             }
         }
     }
