@@ -184,6 +184,7 @@ impl ContinuousTrainer {
                 self.current_depth += 1;
                 self.minimax = MinimaxPlayer::new(self.current_depth);
                 self.metrics.reset();
+                self.try_seal_on_first_advance(prev_depth);
             }
 
             self.episode_count += 1;
@@ -395,6 +396,48 @@ impl ContinuousTrainer {
             ));
         }
         parts.join("")
+    }
+
+    /// Attempts to seal replay training memories on the first curriculum advance.
+    ///
+    /// No-op if already sealed or replay is not enabled. On `Err`, logs a
+    /// warning and leaves `training_memories_sealed` false so the next advance
+    /// retries. On `Ok`, flips `training_memories_sealed = true`; subsequent
+    /// advances skip this block entirely (idempotency via flag guard).
+    ///
+    /// `seal_attempts` increments before the `match` so both `Ok` and `Err`
+    /// outcomes are counted. After the first `Ok` the flag prevents re-entry,
+    /// keeping the counter at exactly 1.
+    ///
+    /// # Parameters
+    ///
+    /// * `prev_depth` - Curriculum depth before the advance (used in log message).
+    fn try_seal_on_first_advance(&mut self, prev_depth: usize) {
+        if self.training_memories_sealed || !self.replay_enabled {
+            return;
+        }
+        // Increment BEFORE the match to count attempts (Ok + Err).
+        self.seal_attempts += 1;
+        match self.agent.seal_replay_training_memories() {
+            Ok(()) => {
+                self.training_memories_sealed = true;
+                let line = format!(
+                    "[ep {}] replay training memories sealed (curriculum advance {}->{})",
+                    self.episode_count, prev_depth, self.current_depth,
+                );
+                eprintln!("{line}");
+                self.log_lines.push(line);
+            }
+            Err(e) => {
+                // Log-warn-skip: retry on next advance; sealed stays false.
+                let line = format!(
+                    "[ep {}] seal_replay_training_memories failed: {} (will retry next advance)",
+                    self.episode_count, e,
+                );
+                eprintln!("{line}");
+                self.log_lines.push(line);
+            }
+        }
     }
 
     /// Returns a reference to the agent.
@@ -635,10 +678,11 @@ mod tests {
 
     #[test]
     fn test_scenario_4_3_seal_only_once_on_first_advance() {
-        // Given: Phase 2 active, easy curriculum to force early advance
+        // Given: Phase 2 active, trivially easy curriculum (threshold=0.0, window=1)
+        // so the first episode always triggers the first advance.
         let mut trainer = build_test_trainer(
             /* replay_training_capacity */ 256, /* replay_interval */ 100,
-            /* advance_threshold */ 0.30, /* window_size */ 20,
+            /* advance_threshold */ 0.0, /* window_size */ 1,
             /* max_episodes */ 200,
         );
         // When: run until max_episodes (expecting multiple advances)
