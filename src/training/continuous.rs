@@ -506,4 +506,64 @@ mod tests {
         let ptr2 = trainer.agent_mut() as *const _;
         assert_eq!(ptr1, ptr2);
     }
+
+    /// Builds a `ContinuousTrainer` with the Phase 2 replay fields configured.
+    ///
+    /// # Parameters
+    ///
+    /// * `replay_training_capacity` - Capacity of compartment A (0 = replay disabled).
+    /// * `replay_interval` - Episodes between `replay_learn` calls.
+    /// * `advance_threshold` - Non-loss rate to advance curriculum depth.
+    /// * `window_size` - Sliding-window size for curriculum metrics.
+    /// * `max_episodes` - Episode cap for the training loop.
+    fn build_test_trainer(
+        replay_training_capacity: usize,
+        replay_interval: usize,
+        advance_threshold: f64,
+        window_size: usize,
+        max_episodes: usize,
+    ) -> ContinuousTrainer {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = replay_training_capacity;
+        config.agent.replay_recent_capacity = if replay_training_capacity > 0 { 128 } else { 0 };
+        config.training.replay_interval = replay_interval;
+        config.curriculum.advance_threshold = advance_threshold;
+        config.curriculum.window_size = window_size;
+        config.continuous.max_episodes = max_episodes;
+        config.training.seed = 42;
+
+        let agent_config = config.to_agent_config().unwrap();
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, 42).unwrap();
+        ContinuousTrainer::new(agent, &config, Arc::new(AtomicBool::new(false)))
+    }
+
+    #[test]
+    fn test_trainer_construction_phase2_off_initial_state() {
+        let trainer = build_test_trainer(
+            /* replay_training_capacity */ 0,
+            /* replay_interval */ 100,
+            /* advance_threshold */ 0.95,
+            /* window_size */ 100,
+            /* max_episodes */ 200,
+        );
+        assert_eq!(trainer.replay_invocations(), 0);
+        assert!(!trainer.training_memories_sealed());
+        assert_eq!(trainer.seal_attempts(), 0);
+        assert!(!trainer.replay_enabled(), "replay_enabled should be false when capacity=0");
+    }
+
+    #[test]
+    fn test_trainer_construction_phase2_on_initial_state() {
+        let trainer = build_test_trainer(
+            /* replay_training_capacity */ 256,
+            /* replay_interval */ 50,
+            /* advance_threshold */ 0.30,
+            /* window_size */ 20,
+            /* max_episodes */ 100,
+        );
+        assert_eq!(trainer.replay_invocations(), 0);
+        assert!(!trainer.training_memories_sealed());
+        assert_eq!(trainer.seal_attempts(), 0);
+        assert!(trainer.replay_enabled(), "replay_enabled should be true when capacity>0");
+    }
 }
