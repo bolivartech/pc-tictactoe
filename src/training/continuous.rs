@@ -103,12 +103,8 @@ pub struct ContinuousTrainer {
     replay_enabled: bool,
     /// Number of episodes between `replay_learn` invocations (from `config.training.replay_interval`).
     /// Ignored when `replay_enabled == false`.
-    /// Used in Task 5 (replay trigger); suppressed until then.
-    #[allow(dead_code)]
     replay_interval: usize,
     /// Batch size for each `replay_learn` call (from `config.agent.replay_batch_size`).
-    /// Used in Task 5 (replay trigger); suppressed until then.
-    #[allow(dead_code)]
     replay_batch_size: usize,
     /// `true` after the first successful `seal_replay_training_memories()` call.
     /// Warmup gate — `replay_learn` is not invoked until this is `true`.
@@ -188,6 +184,32 @@ impl ContinuousTrainer {
             }
 
             self.episode_count += 1;
+
+            // [P2] Replay trigger interval-based (post-warmup).
+            // Gate: only fires after seal (warmup B per spec §3.5).
+            // NO log_lines.push here — this is a hot path (fires every replay_interval eps).
+            if self.training_memories_sealed
+                && self.replay_interval > 0
+                && self.episode_count.is_multiple_of(self.replay_interval)
+            {
+                match self.agent.replay_learn(self.replay_batch_size) {
+                    Ok(()) => {
+                        self.replay_invocations += 1;
+                        eprintln!(
+                            "[ep {}] replay_learn batch={} (invocation #{})",
+                            self.episode_count,
+                            self.replay_batch_size,
+                            self.replay_invocations,
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[ep {}] replay_learn failed: {} (skipped)",
+                            self.episode_count, e,
+                        );
+                    }
+                }
+            }
 
             if self.log_interval > 0 && self.episode_count.is_multiple_of(self.log_interval) {
                 let cl_info = self.cl_status_string();
