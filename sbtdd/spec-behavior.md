@@ -639,6 +639,18 @@ Scenario 4.9 — Seed-test 35 × 200k con `config_seedtest_p1p2.toml` extendida 
 
 **Caveat (MAGI Checkpoint 2 amendment):** el compartment A (training memories) captura transitions de **depth=1 solamente** — el seal se dispara al primer advance (D=1 → D=2), antes de que el agente experimente D=2+. Esto significa que el replay retroalimenta con memorias de depth-1 solamente, lo cual puede ser limitante para mejoras en D>=7. Si EMP falla contra H1, considerar en Fase siguiente un `seal_on_advance_depth` tunable (default 1 preserva comportamiento actual).
 
+### 10.2.1 KNOWN GAPS en el criterio empírico (MAGI Loop 2 amendment)
+
+Antes de interpretar los resultados de EMP.2 (seed-test 35 × 200k), considerar estos sesgos estructurales del diseño actual que pueden confundir el veredicto:
+
+1. **Compartment A depth-1-only:** como se describe arriba, el replay nutre siempre desde experiencia de depth=1. Un resultado negativo contra H1 NO necesariamente invalida el concepto de Phase 2 self-recovery — puede indicar que `seal_on_advance_depth = 1` es demasiado temprano. Lectura honesta requiere distinguir "replay inútil bajo curriculum" vs "seal timing sub-óptimo".
+
+2. **`replay_learn` Err path no unit-testeado:** solo el path Ok está bajo TDD. Si el Err path se activa durante el experimento (NaN propagation, invariantes internos violados), se verá en logs del experiment.txt pero no hay guarantee de behavior correcto bajo esas condiciones.
+
+3. **Tests con threshold=0.0/window=1:** los tests de Task 4-5 usan thresholds trivialmente permisivos para garantizar advance. Esto prueba estructura (seal+replay fires) pero no realismo (advance bajo performance significativa). Comportamiento bajo thresholds reales (0.95/1000 como en configs de experimento) no está cubierto por unit tests — solo por el experimento empírico en sí.
+
+**Acción para EMP analysis:** al reportar resultados, explicitar estos 3 gaps en la sección de caveats del `analysis.md` post-experimento.
+
 ### 10.3 Exito de proceso
 
 - Ningun commit rompe la secuencia TDD (verificado por TDD-Guard + `/verification-before-completion`).

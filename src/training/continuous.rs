@@ -453,13 +453,24 @@ impl ContinuousTrainer {
     // Logging convention: project uses `eprintln!` as the stand-in for
     // `log::info!` / `log::warn!` — the `log` crate is not a project dep
     // (see Cargo.toml). Curriculum-advance banner at `train()` follows the
-    // same pattern. Replay Ok path is hot (fires every `replay_interval`
-    // episodes) so no `log_lines.push`. Replay Err path is cold and
-    // diagnostically valuable — pushes to `log_lines` for post-hoc test/
-    // experiment inspection.
+    // same pattern.
     //
-    // See `PcActorCritic::replay_learn` in pc-rl-core: safe on empty buffer
-    // by contract (returns `Ok(())`), so Err is expected to be rare.
+    // Hot-path allocation policy:
+    // - Replay **Ok** path is hot (fires every `replay_interval` eps), so
+    //   it is **intentionally** log-only (no `log_lines.push`) to avoid
+    //   unbounded Vec growth in long runs. Tests verifying replay activity
+    //   assert on `replay_invocations()` counter instead of log substrings.
+    // - Replay **Err** path is cold by design — `PcActorCritic::replay_learn`
+    //   returns `Ok(())` on empty buffer by contract (pc-rl-core), so Err
+    //   indicates an exceptional condition (NaN, internal invariant). These
+    //   are diagnostically valuable — push to `log_lines` for post-hoc
+    //   inspection in experiments.
+    //
+    // Known gap (Loop 2 MAGI finding, deferred as follow-up): the real Err
+    // path is not exercised by a fault-injection test. `test_replay_learn_ok_on_adversarial_batch`
+    // only documents that adversarial inputs (empty buffer, batch_size=0)
+    // return Ok per core contract. A NaN/invariant-violation test would
+    // need pc-rl-core fault injection hooks that don't yet exist.
     fn maybe_fire_replay(&mut self) {
         if !self.training_memories_sealed
             || self.replay_interval == 0
@@ -470,6 +481,8 @@ impl ContinuousTrainer {
         match self.agent.replay_learn(self.replay_batch_size) {
             Ok(()) => {
                 self.replay_invocations += 1;
+                // Intentionally log-only (no log_lines.push) — see hot-path
+                // allocation policy above.
                 eprintln!(
                     "[ep {}] replay_learn batch={} (invocation #{})",
                     self.episode_count, self.replay_batch_size, self.replay_invocations,
@@ -894,6 +907,13 @@ mod tests {
             result_zero.is_ok(),
             "replay_learn should return Ok with batch_size=0"
         );
+
+        // [Loop 2 MAGI Known Gap] This test documents that adversarial inputs
+        // (empty buffer, batch_size=0) return Ok per pc-rl-core contract. The
+        // **real** Err path of replay_learn (NaN propagation, internal invariant
+        // violation) is NOT unit-tested — would require fault-injection hooks
+        // in pc-rl-core that don't exist yet. Err path is validated only via
+        // `log_lines` inspection in live experiments (see maybe_fire_replay).
     }
 
     /// [Loop 1 review C2] `train_one_episode()` is the entry point used by
