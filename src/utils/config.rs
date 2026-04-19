@@ -1111,6 +1111,30 @@ impl AppConfig {
             });
         }
 
+        // Phase 2 orchestration (Option B — wire replay_learn):
+        // Rule 1: replay_interval must be > 0 when buffer is active so the trainer
+        // can fire replay_learn on a fixed cadence.
+        if a.replay_training_capacity > 0 && self.training.replay_interval == 0 {
+            return Err(ConfigError {
+                message:
+                    "training.replay_interval must be > 0 when agent.replay_training_capacity > 0"
+                        .to_string(),
+            });
+        }
+
+        // Rule 2 [MAGI amendment Checkpoint 2]: batch_size must not exceed buffer capacity.
+        // Fail fast — under batch_size > capacity, replay_learn would sample with total_len
+        // < batch_size; the core handles this gracefully (returns Ok), but the config is
+        // semantically wrong.
+        if a.replay_training_capacity > 0 && a.replay_batch_size > a.replay_training_capacity {
+            return Err(ConfigError {
+                message: format!(
+                    "replay_batch_size ({}) must be <= replay_training_capacity ({}) — cannot sample more than buffer holds",
+                    a.replay_batch_size, a.replay_training_capacity,
+                ),
+            });
+        }
+
         Ok(())
     }
 
