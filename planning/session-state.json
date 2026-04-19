@@ -1,9 +1,0 @@
-{
-  "plan_path": "planning/claude-plan-tdd.md",
-  "current_task_id": "5",
-  "current_task_title": "Replay trigger interval-based",
-  "current_phase": "red",
-  "phase_started_at_commit": "f8527039ab528fbdbc67497087ff910928379c1e",
-  "last_verification_at": "2026-04-18T00:00:00Z",
-  "last_verification_result": "passed"
-}
