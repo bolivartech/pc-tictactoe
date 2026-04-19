@@ -1958,4 +1958,48 @@ replay_interval = 250
         assert_eq!(config.training.replay_interval, 250);
         assert!(config.validate().is_ok());
     }
+
+    // Task 2: replay_interval > 0 when buffer active (Rule 1)
+    #[test]
+    fn test_validation_rejects_interval_zero_with_buffer_active() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 1024;
+        config.training.replay_interval = 0;
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.message.contains("replay_interval must be > 0"),
+            "expected 'replay_interval must be > 0' in error message, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_validation_allows_interval_zero_with_buffer_off() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 0;
+        config.training.replay_interval = 0;
+        assert!(config.validate().is_ok());
+    }
+
+    // Task 2: replay_batch_size <= replay_training_capacity (Rule 2 — MAGI amendment)
+    #[test]
+    fn test_validation_rejects_batch_size_exceeds_capacity() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 64;
+        config.agent.replay_batch_size = 128; // > capacity
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.message.contains("replay_batch_size"),
+            "expected 'replay_batch_size ... <= replay_training_capacity' in error, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_validation_allows_batch_size_equals_capacity() {
+        let mut config = AppConfig::default();
+        config.agent.replay_training_capacity = 128;
+        config.agent.replay_batch_size = 128; // == capacity, legal
+        assert!(config.validate().is_ok());
+    }
 }
