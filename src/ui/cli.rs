@@ -332,7 +332,7 @@ pub fn run_play(args: PlayArgs) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Play)?;
             println!("Agent plays: {action}");
             env.step(action).unwrap();
         }
@@ -420,7 +420,7 @@ pub fn run_evaluate(args: EvaluateArgs) -> Result<(), Box<dyn std::error::Error>
             if env.current_player() == agent_side {
                 let state = env.board_as_f64(agent_side);
                 let valid = env.valid_actions();
-                let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+                let (action, _) = agent.act(&state, &valid, SelectionMode::Play)?;
                 env.step(action).unwrap();
             } else {
                 let action = minimax.choose_action(&env);

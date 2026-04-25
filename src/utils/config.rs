@@ -17,7 +17,7 @@ use pc_rl_core::activation::Activation;
 use pc_rl_core::layer::LayerDef;
 use pc_rl_core::mlp_critic::MlpCriticConfig;
 use pc_rl_core::pc_actor::PcActorConfig;
-use pc_rl_core::pc_actor_critic::PcActorCriticConfig;
+use pc_rl_core::pc_actor_critic::{ActionSpace, PcActorCriticConfig};
 use serde::Deserialize;
 
 /// Top-level application configuration parsed from TOML.
@@ -241,6 +241,22 @@ pub struct AgentSection {
     /// `[0.0, 10*scale_ceil]` finite or sentinel.
     #[serde(default = "default_replay_floor_sentinel")]
     pub critic_floor_replay: f64,
+    /// pc-rl-core v4.0.0 generic action space (`"discrete"` or
+    /// `"continuous"`, case-insensitive). Default `"discrete"`.
+    ///
+    /// **TicTacToe is discrete by domain** (9 board cells), so
+    /// `"continuous"` is rejected at `to_agent_config()` time with a
+    /// clear error. The field is exposed in TOML to keep TTT's interface
+    /// generic-action-space-aware (per pc-rl-core v4.0.0 API), but the
+    /// validation enforces the domain constraint.
+    #[serde(default = "default_action_space")]
+    pub action_space: String,
+    /// pc-rl-core v4.0.0 Gaussian policy std-dev for continuous mode.
+    /// Default 0.1. Ignored when `action_space == "discrete"` (TTT's
+    /// only legal value), but validation still enforces `> 0.0 && finite`
+    /// for forward-compat hygiene.
+    #[serde(default = "default_policy_sigma")]
+    pub policy_sigma: f64,
 }
 
 /// Actor network configuration section.
@@ -707,6 +723,15 @@ fn default_replay_batch_size() -> usize {
 fn default_replay_floor_sentinel() -> f64 {
     -1.0
 }
+/// Default `action_space`: `"discrete"` (TTT is discrete by domain).
+fn default_action_space() -> String {
+    "discrete".to_string()
+}
+/// Default Gaussian policy std-dev for continuous mode (mirror of
+/// pc-rl-core v4.0.0 `default_policy_sigma`).
+fn default_policy_sigma() -> f64 {
+    0.1
+}
 fn default_stress_champion_path() -> String {
     "champion.json".to_string()
 }
@@ -795,6 +820,8 @@ impl Default for AgentSection {
             replay_batch_size: default_replay_batch_size(),
             scale_floor_replay: default_replay_floor_sentinel(),
             critic_floor_replay: default_replay_floor_sentinel(),
+            action_space: default_action_space(),
+            policy_sigma: default_policy_sigma(),
         }
     }
 }
@@ -895,6 +922,36 @@ fn parse_activation(s: &str) -> Result<Activation, ConfigError> {
         other => Err(ConfigError {
             message: format!(
                 "unknown activation '{other}'; expected tanh, relu, sigmoid, elu, softsign, or linear"
+            ),
+        }),
+    }
+}
+
+/// Parses an action-space name (case-insensitive) into a pc-rl-core
+/// [`ActionSpace`].
+///
+/// **TicTacToe-specific constraint:** `"continuous"` is rejected at this
+/// layer because the env is discrete by domain (9 board cells). The
+/// generic-action-space interface is exposed in TOML for forward-compat
+/// awareness, but the parser refuses to construct a Continuous agent
+/// against a discrete env.
+///
+/// # Parameters
+///
+/// * `s` - Action space name. Accepts `"discrete"` (case-insensitive).
+fn parse_action_space(s: &str) -> Result<ActionSpace, ConfigError> {
+    match s.to_lowercase().as_str() {
+        "discrete" => Ok(ActionSpace::Discrete),
+        "continuous" => Err(ConfigError {
+            message: "action_space 'continuous' is not supported in TicTacToe \
+                      (env is discrete by domain — 9 board cells). \
+                      Use action_space = \"discrete\" or remove the field to use the default."
+                .to_string(),
+        }),
+        other => Err(ConfigError {
+            message: format!(
+                "unknown action_space '{other}'; expected 'discrete' \
+                 (TicTacToe is discrete-only by domain)"
             ),
         }),
     }
@@ -1169,6 +1226,19 @@ impl AppConfig {
         Self::validate_replay_floor("scale_floor_replay", a.scale_floor_replay, a.scale_ceil)?;
         Self::validate_replay_floor("critic_floor_replay", a.critic_floor_replay, a.scale_ceil)?;
 
+        // pc-rl-core v4.0.0 policy_sigma must be > 0.0 && finite even when
+        // ignored (Discrete mode). Mirror of upstream validation contract.
+        if !a.policy_sigma.is_finite() {
+            return Err(ConfigError {
+                message: format!("policy_sigma ({}) must be finite", a.policy_sigma),
+            });
+        }
+        if a.policy_sigma <= 0.0 {
+            return Err(ConfigError {
+                message: format!("policy_sigma ({}) must be > 0.0", a.policy_sigma),
+            });
+        }
+
         Ok(())
     }
 
@@ -1402,6 +1472,12 @@ impl AppConfig {
             replay_batch_size: self.agent.replay_batch_size,
             scale_floor_replay: self.agent.scale_floor_replay,
             critic_floor_replay: self.agent.critic_floor_replay,
+            // pc-rl-core v4.0.0 generic action space. Parsed from TOML; the
+            // parser rejects "continuous" because TicTacToe is discrete by
+            // domain (9 board cells). policy_sigma is forwarded as-is to
+            // the core (ignored when action_space == Discrete).
+            action_space: parse_action_space(&self.agent.action_space)?,
+            policy_sigma: self.agent.policy_sigma,
         })
     }
 
@@ -2090,5 +2166,78 @@ replay_interval = 250
         config.agent.replay_training_capacity = 128;
         config.agent.replay_batch_size = 128; // == capacity, legal
         assert!(config.validate().is_ok());
+    }
+
+    // ── pc-rl-core v4.0.0 generic action space (TTT discrete-only) ──
+
+    #[test]
+    fn test_action_space_default_is_discrete() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.agent.action_space, "discrete");
+    }
+
+    #[test]
+    fn test_policy_sigma_default_is_0_1() {
+        let cfg = AppConfig::default();
+        assert!((cfg.agent.policy_sigma - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_action_space_parses_discrete_case_insensitive() {
+        let mut cfg = AppConfig::default();
+        for variant in ["discrete", "Discrete", "DISCRETE", "DiScReTe"] {
+            cfg.agent.action_space = variant.to_string();
+            let agent_cfg = cfg.to_agent_config();
+            assert!(
+                agent_cfg.is_ok(),
+                "case-insensitive '{variant}' should parse as Discrete; got error"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validation_rejects_continuous_action_space() {
+        let mut cfg = AppConfig::default();
+        cfg.agent.action_space = "continuous".to_string();
+        let err = cfg.to_agent_config().unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("continuous"),
+            "expected 'continuous' in error message, got: {msg}"
+        );
+        assert!(
+            msg.contains("discrete") || msg.contains("tic-tac-toe") || msg.contains("9"),
+            "error should explain TTT discrete-only domain, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_unknown_action_space() {
+        let mut cfg = AppConfig::default();
+        cfg.agent.action_space = "quantum".to_string();
+        let err = cfg.to_agent_config().unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("quantum") || msg.contains("unknown") || msg.contains("expected"),
+            "expected 'unknown action space' style error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_validation_rejects_non_finite_policy_sigma() {
+        let mut cfg = AppConfig::default();
+        cfg.agent.policy_sigma = f64::NAN;
+        assert!(cfg.validate().is_err());
+        cfg.agent.policy_sigma = f64::INFINITY;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validation_rejects_zero_or_negative_policy_sigma() {
+        let mut cfg = AppConfig::default();
+        cfg.agent.policy_sigma = 0.0;
+        assert!(cfg.validate().is_err());
+        cfg.agent.policy_sigma = -0.5;
+        assert!(cfg.validate().is_err());
     }
 }
