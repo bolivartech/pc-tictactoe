@@ -1,3 +1,6 @@
+# Champion search config — TD(5), CL disabled, alternating sides, 200k per session
+# Use with: cargo run --release -- find-champion -c config_champion.toml
+
 [agent]
 gamma = 0.99
 surprise_low = 0.02
@@ -5,19 +8,20 @@ surprise_high = 0.15
 adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
-td_steps = 0
-# Continuous Learning (all disabled by default)
-# M1 — Surprise-driven scale range
-scale_floor = 0.0
+
+# TD(5) = Monte Carlo for TicTacToe
+td_steps = 5
+
+# CL disabled — exploration phase
+scale_floor = 0.1
 scale_ceil = 2.0
-# M2 — Hysteresis (dual-EWMA state machines)
 actor_hysteresis = false
 critic_hysteresis = false
-# M3 — Consolidation decay
+actor_wakes_critic = false
+critic_wakes_actor = false
 consolidation_decay = 1.0
 critic_consolidation_decay = 1.0
 adaptive_consolidation = false
-# M4 — EWC
 ewc_lambda = 0.0
 
 [agent.actor]
@@ -48,7 +52,6 @@ size = 18
 activation = "softsign"
 
 [agent.critic]
-# 9 + 27 + 27 + 18 = 81
 input_size = 81
 output_activation = "linear"
 lr = 0.005
@@ -60,7 +63,7 @@ activation = "softsign"
 [training]
 episodes = 200000
 checkpoint_interval = 5000
-log_interval = 500
+log_interval = 1000
 seed = 42
 
 [curriculum]
@@ -68,7 +71,17 @@ advance_threshold = 0.95
 window_size = 1000
 
 [continuous]
-max_episodes = 50000
+max_episodes = 200000
+random_side = false  # Alternating sides for REINFORCE-compatible comparison
+
+[champion]
+n_iterations = 50
+assessment_depth = 9
+assessment_games_running = 50
+assessment_games_final = 500
+assessment_interval = 1000
+output_path = "champion.json"
+min_depth_filter = 0
 
 [logger]
 level = "info"

@@ -1,0 +1,120 @@
+# Seed-test P1 — Phase 1 (distillation anchors) ENABLED.
+#                 Phase 2 (replay buffer) DISABLED.
+#
+# Isolates the self-recovery Phase 1 contribution (Polyak + Frozen
+# distillation KL gradients) from the Phase 2 replay buffer. Compare
+# against config_seedtest_base.toml for the Phase 1 delta; compare
+# against config_seedtest_p1p2.toml for the Phase 2 marginal delta.
+#
+# Usage:
+#   cargo run --release -- seed-test -c config_seedtest_p1.toml --n 35 --continuous
+#
+# Skeleton matches config_cl_experiment.toml (3-layer [27,27,18]
+# softsign + residual, GAE(1.0), 200k episodes, alternating sides).
+#
+# Lambda values are CONSERVATIVE STARTING POINTS per pc-rl-core
+# CHANGELOG §"Note on tuning" — not validated recommendations. Polyak
+# tau = 0.005 is the library default. After the baseline sweep lands,
+# rerun with empirically tuned lambdas.
+#
+# Known caveat: `champion_update()` and `rollback_*()` are NOT wired
+# into the trainer loop (see src/training/continuous.rs §"Phase 2
+# self-recovery orchestration"). The frozen anchor therefore tracks
+# the initial-weights snapshot only — this config measures the pure
+# KL-regularization effect of the two anchors, not cascade recovery.
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+# ── GAE(λ) ───────────────────────────────────────────────────────
+td_steps = 0
+gae_lambda = 1.0
+
+# ── M1 — legacy scale range ─────────────────────────────────────
+scale_floor = 0.1
+scale_ceil = 2.0
+
+# ── M2 DISABLED ─────────────────────────────────────────────────
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
+
+# ── M3 DISABLED ─────────────────────────────────────────────────
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+
+# ── M4 DISABLED ─────────────────────────────────────────────────
+ewc_lambda = 0.0
+
+# ── Phase 1 (distillation anchors) — ENABLED ────────────────────
+distillation_lambda_polyak = 0.01
+polyak_tau = 0.005
+distillation_lambda_frozen = 0.01
+
+# ── Phase 2 (replay buffer) — DISABLED ──────────────────────────
+replay_training_capacity = 0
+replay_recent_capacity = 0
+replay_positive_only = true
+replay_batch_size = 64
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 200000
+checkpoint_interval = 5000
+log_interval = 500
+seed = 42
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 200000
+random_side = false
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760

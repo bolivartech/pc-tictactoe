@@ -21,6 +21,8 @@ fn main() {
         ui::cli::Command::Experiment(args) => ui::cli::run_experiment(args),
         ui::cli::Command::Init(args) => ui::cli::run_init(args),
         ui::cli::Command::SeedTest(args) => ui::cli::run_seed_test(args),
+        ui::cli::Command::FindChampion(args) => ui::cli::run_find_champion(args),
+        ui::cli::Command::StressTest(args) => ui::cli::run_stress_test(args),
     };
     if let Err(e) = result {
         eprintln!("Error: {e}");

@@ -13,8 +13,8 @@ use std::io::Write;
 
 use crate::training::trainer::Trainer;
 use crate::utils::config::AppConfig;
-use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
+use pc_rl_core::CpuLinAlg;
 
 /// Which hyperparameter to sweep in the experiment.
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,8 @@ impl SweepParam {
 /// Result of a single training run within an experiment.
 #[derive(Debug, Clone)]
 pub struct RunResult {
+    /// Run number within the experiment (1-based).
+    pub run_number: usize,
     /// Random seed used for this run.
     pub seed: u64,
     /// local_lambda value used.
@@ -60,7 +62,7 @@ pub struct RunResult {
 
 impl fmt::Display for RunResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "============")?;
+        writeln!(f, "======= Run {} =======", self.run_number)?;
         writeln!(f, "seed={}", self.seed)?;
         writeln!(f, "lambda={:.8}", self.lambda)?;
         for line in &self.log_lines {
@@ -104,6 +106,7 @@ pub fn run_single(
 
     for _ in 0..episodes {
         let trajectory = trainer.run_episode_pub();
+        #[allow(deprecated)] // Experiment runner uses trajectory-based learning
         trainer.agent_mut().learn(&trajectory);
         trainer.record_and_advance();
 
@@ -130,6 +133,7 @@ pub fn run_single(
     }
 
     Ok(RunResult {
+        run_number: 0,
         seed,
         lambda,
         max_depth: trainer.current_depth(),
@@ -176,6 +180,7 @@ pub fn run_single_with_sweep(
 
     for _ in 0..episodes {
         let trajectory = trainer.run_episode_pub();
+        #[allow(deprecated)] // Experiment runner uses trajectory-based learning
         trainer.agent_mut().learn(&trajectory);
         trainer.record_and_advance();
 
@@ -202,6 +207,7 @@ pub fn run_single_with_sweep(
     }
 
     Ok(RunResult {
+        run_number: 0,
         seed,
         lambda: config.agent.actor.local_lambda,
         max_depth: trainer.current_depth(),
@@ -241,7 +247,8 @@ pub fn run_experiment_sweep<W: Write>(
         let seed: u64 = rand::Rng::gen(&mut rng);
 
         for &value in &values {
-            let result = run_single_with_sweep(base_config, seed, sweep, value)?;
+            let mut result = run_single_with_sweep(base_config, seed, sweep, value)?;
+            result.run_number = all_results.len() + 1;
             write!(output, "{result}")?;
             output.flush()?;
             all_results.push(result);
@@ -278,7 +285,8 @@ pub fn run_experiment<W: Write>(
         let seed: u64 = rand::Rng::gen(&mut rng);
 
         for &lambda in &lambdas {
-            let result = run_single(base_config, seed, lambda)?;
+            let mut result = run_single(base_config, seed, lambda)?;
+            result.run_number = all_results.len() + 1;
             write!(output, "{result}")?;
             output.flush()?;
             all_results.push(result);
@@ -313,6 +321,8 @@ pub fn run_seed_test<W: Write>(
 
     for _ in 0..n {
         let seed: u64 = rand::Rng::gen(&mut rng);
+        let run_number = all_results.len() + 1;
+        eprintln!("======= Run {run_number}/{n} (seed={seed}) =======");
 
         let mut config = base_config.clone();
         config.training.seed = seed;
@@ -329,6 +339,7 @@ pub fn run_seed_test<W: Write>(
 
         for _ in 0..episodes {
             let trajectory = trainer.run_episode_pub();
+            #[allow(deprecated)] // Seed test uses trajectory-based learning
             trainer.agent_mut().learn(&trajectory);
             trainer.record_and_advance();
 
@@ -355,6 +366,7 @@ pub fn run_seed_test<W: Write>(
         }
 
         let result = RunResult {
+            run_number: all_results.len() + 1,
             seed,
             lambda: config.agent.actor.local_lambda,
             max_depth: trainer.current_depth(),
@@ -362,6 +374,67 @@ pub fn run_seed_test<W: Write>(
             loss_rate: trainer.metrics().loss_rate(),
             draw_rate: trainer.metrics().draw_rate(),
             log_lines,
+        };
+        write!(output, "{result}")?;
+        output.flush()?;
+        all_results.push(result);
+    }
+
+    Ok(all_results)
+}
+
+/// Runs N continuous-learning training runs with fixed config, varying only the seed.
+///
+/// Uses [`ContinuousTrainer`] with `step_masked()` to exercise CL features
+/// (hysteresis, consolidation, EWC). Each run gets a unique random seed.
+///
+/// # Arguments
+///
+/// * `base_config` - Configuration to use for all runs (CL fields should be enabled).
+/// * `n` - Number of runs (random seeds).
+/// * `output` - Writer for results.
+///
+/// # Errors
+///
+/// Returns an error on training or I/O failures.
+pub fn run_seed_test_continuous<W: Write>(
+    base_config: &AppConfig,
+    n: usize,
+    output: &mut W,
+) -> Result<Vec<RunResult>, Box<dyn std::error::Error>> {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    use crate::training::continuous::ContinuousTrainer;
+
+    let mut all_results = Vec::new();
+    let mut rng = rand::thread_rng();
+
+    for _ in 0..n {
+        let seed: u64 = rand::Rng::gen(&mut rng);
+        let run_number = all_results.len() + 1;
+        eprintln!("======= Run {run_number}/{n} (seed={seed}) =======");
+
+        let mut config = base_config.clone();
+        config.training.seed = seed;
+
+        let agent_config = config.to_agent_config()?;
+        let agent = PcActorCritic::new(CpuLinAlg::new(), agent_config, seed)?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut trainer = ContinuousTrainer::new(agent, &config, stop);
+
+        trainer.train();
+
+        let result = RunResult {
+            run_number,
+            seed,
+            lambda: config.agent.actor.local_lambda,
+            max_depth: trainer.current_depth(),
+            win_rate: trainer.metrics().win_rate(),
+            loss_rate: trainer.metrics().loss_rate(),
+            draw_rate: trainer.metrics().draw_rate(),
+            log_lines: trainer.log_lines().to_vec(),
         };
         write!(output, "{result}")?;
         output.flush()?;
@@ -425,6 +498,7 @@ mod tests {
     #[test]
     fn test_display_format() {
         let result = RunResult {
+            run_number: 3,
             seed: 42,
             lambda: 0.99,
             max_depth: 8,
@@ -434,7 +508,7 @@ mod tests {
             log_lines: vec!["[ep    50/100] win=50.0% loss=50.0% draw=0.0% | depth=1".into()],
         };
         let output = format!("{result}");
-        assert!(output.contains("============"));
+        assert!(output.contains("Run 3"));
         assert!(output.contains("seed=42"));
         assert!(output.contains("lambda=0.99"));
         assert!(output.contains("[ep    50/100]"));
@@ -503,7 +577,7 @@ mod tests {
         let mut buf = Vec::new();
         let _ = run_seed_test(&config, 1, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("============"));
+        assert!(output.contains("Run "));
         assert!(output.contains("seed="));
         assert!(output.contains("------------"));
     }
@@ -514,7 +588,7 @@ mod tests {
         let mut buf = Vec::new();
         let _ = run_experiment(&config, 1, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
-        assert!(output.contains("============"));
+        assert!(output.contains("Run "));
         assert!(output.contains("seed="));
         assert!(output.contains("lambda="));
         assert!(output.contains("------------"));

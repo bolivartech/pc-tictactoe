@@ -1,0 +1,109 @@
+# Stress test config — CL DISABLED (control for CL-on comparison)
+# Mirrors config_stress.toml EXACTLY except for the CL fields, which are
+# set to match the "CL disabled" configuration used in config_champion.toml
+# during the champion's own training. This is the natural baseline — the
+# champion is run through the stress environment under the same CL state
+# it was born in.
+#
+# Use with: cargo run --release -- stress-test -c config_stress_cl_off.toml
+#
+# Pairs with config_stress.toml (CL on) for hypothesis:
+#   "CL protects champion under random-depth stress vs no-CL baseline"
+#
+# Run multiple replicates of each and compare distributions of
+# (final_fitness - baseline_fitness) across stress_test_cl_off_*.csv vs
+# stress_test_*.csv. Since StressTester uses unseeded thread_rng() (by
+# design), runs are non-deterministic — statistics over replicates is how
+# the comparison is made.
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+td_steps = 5
+
+# CL fully disabled — true "no CL" control
+# M1 neutralized: scale_floor = 0.999, scale_ceil = 1.001 → the surprise
+# multiplier varies at most ±0.1% around nominal lr, below noise floor for
+# any practical effect. (Can't use floor == ceil because pc-rl-core's
+# validator requires ceil > floor strictly.) Master switches off for
+# M2/M3/M4. The agent runs pure TD(5) with no meaningful CL active.
+scale_floor = 0.999
+scale_ceil = 1.001
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+ewc_lambda = 0.0
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 100000
+checkpoint_interval = 5000
+log_interval = 1000
+seed = 42
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 100000
+random_side = true
+
+[stress_test]
+champion_path = "champion.json"
+opponent_depth_min = 1
+opponent_depth_max = 9
+max_episodes = 100000
+assessment_interval = 1000
+assessment_games = 200
+log_path = "stress_test_cl_off.csv"
+output_agent_path = "champion_post_stress_cl_off.json"
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760

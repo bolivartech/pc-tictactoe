@@ -1,0 +1,89 @@
+# GAE(0.95) vs REINFORCE control experiment — CL disabled, alternating sides
+# Equivalent to REINFORCE baseline ([27,27,18] 3-layer, 200k episodes, alternating)
+# Use with: cargo run --release -- seed-test -c config_cl_experiment.toml -n 35 --continuous
+
+[agent]
+gamma = 0.99
+surprise_low = 0.02
+surprise_high = 0.15
+adaptive_surprise = true
+surprise_buffer_size = 400
+entropy_coeff = 0.0
+
+# ── GAE(λ): eligibility traces ───────────────────────────────────
+td_steps = 0                   # Disabled — mutually exclusive with gae_lambda
+gae_lambda = 1.0               # GAE(1.0) = pure Monte Carlo (equivalent to REINFORCE return)
+
+# ── M1: Surprise-driven scale range — legacy behavior ──────────
+scale_floor = 0.1              # Legacy (v2.0.0) minimum LR multiplier, no freeze
+scale_ceil = 2.0               # 2x learning rate when surprise is high
+
+# ── M2: Hysteresis — DISABLED ───────────────────────────────────
+actor_hysteresis = false
+critic_hysteresis = false
+actor_wakes_critic = false
+critic_wakes_actor = false
+
+# ── M3: Consolidation decay — DISABLED ──────────────────────────
+consolidation_decay = 1.0
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+
+# ── M4: EWC — DISABLED ──────────────────────────────────────────
+ewc_lambda = 0.0
+
+[agent.actor]
+input_size = 9
+output_size = 9
+output_activation = "linear"
+alpha = 0.03
+tol = 0.01
+min_steps = 1
+max_steps = 5
+lr_weights = 0.005
+synchronous = true
+temperature = 1.0
+local_lambda = 0.9999
+residual = true
+rezero_init = 0.1
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 27
+activation = "softsign"
+
+[[agent.actor.hidden_layers]]
+size = 18
+activation = "softsign"
+
+[agent.critic]
+# 9 + 27 + 27 + 18 = 81
+input_size = 81
+output_activation = "linear"
+lr = 0.005
+
+[[agent.critic.hidden_layers]]
+size = 36
+activation = "softsign"
+
+[training]
+episodes = 200000
+checkpoint_interval = 5000
+log_interval = 500
+seed = 42
+
+[curriculum]
+advance_threshold = 0.95
+window_size = 1000
+
+[continuous]
+max_episodes = 200000
+random_side = false            # Alternating (even=P1, odd=P2) — matches REINFORCE baseline
+
+[logger]
+level = "info"
+max_backups = 3
+max_size = 10485760

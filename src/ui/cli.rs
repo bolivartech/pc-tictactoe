@@ -20,10 +20,10 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use pc_rl_core::CpuLinAlg;
 use pc_rl_core::pc_actor::SelectionMode;
 use pc_rl_core::pc_actor_critic::PcActorCritic;
 use pc_rl_core::serializer::{load_agent, save_agent};
+use pc_rl_core::CpuLinAlg;
 
 use crate::env::minimax::MinimaxPlayer;
 use crate::env::tictactoe::{GameResult, Player, TicTacToe};
@@ -57,6 +57,10 @@ pub enum Command {
     Init(InitArgs),
     /// Test a fixed config across N random seeds for statistical stability.
     SeedTest(SeedTestArgs),
+    /// Search for the best champion across N training sessions.
+    FindChampion(FindChampionArgs),
+    /// Stress-test a champion against random-depth opponents.
+    StressTest(StressTestArgs),
 }
 
 /// Arguments for the train subcommand.
@@ -86,6 +90,18 @@ pub struct TrainArgs {
     /// Initial ReZero scaling factor for residual connections.
     #[arg(long)]
     pub rezero_init: Option<f64>,
+    /// Enable actor hysteresis (FROZEN/PLASTIC state machine).
+    #[arg(long)]
+    pub actor_hysteresis: bool,
+    /// Enable critic hysteresis (FROZEN/PLASTIC state machine).
+    #[arg(long)]
+    pub critic_hysteresis: bool,
+    /// EWC regularization strength (0.0 = disabled).
+    #[arg(long)]
+    pub ewc_lambda: Option<f64>,
+    /// Scale floor for surprise-driven learning rate (0.0 = true freeze).
+    #[arg(long)]
+    pub scale_floor: Option<f64>,
 }
 
 /// Arguments for the play subcommand.
@@ -136,6 +152,9 @@ pub struct SeedTestArgs {
     /// Path to TOML configuration file.
     #[arg(long, short, default_value = "config.toml")]
     pub config: String,
+    /// Use continuous learning mode (step_masked) instead of episodic.
+    #[arg(long)]
+    pub continuous: bool,
 }
 
 /// Arguments for the init subcommand.
@@ -155,6 +174,31 @@ pub struct BenchmarkArgs {
     /// Number of training episodes for the benchmark.
     #[arg(long, short, default_value = "100")]
     pub episodes: usize,
+}
+
+/// Arguments for the find-champion subcommand.
+#[derive(Parser)]
+pub struct FindChampionArgs {
+    /// Path to TOML configuration file.
+    #[arg(long, short, default_value = "config_champion.toml")]
+    pub config: String,
+    /// Override n_iterations from config.
+    #[arg(long)]
+    pub iterations: Option<usize>,
+}
+
+/// Arguments for the stress-test subcommand.
+#[derive(Parser)]
+pub struct StressTestArgs {
+    /// Path to TOML configuration file.
+    #[arg(long, short, default_value = "config_stress.toml")]
+    pub config: String,
+    /// Override champion_path from config.
+    #[arg(long)]
+    pub champion: Option<String>,
+    /// Override max_episodes from config.
+    #[arg(long)]
+    pub max_episodes: Option<usize>,
 }
 
 /// Runs the train subcommand.
@@ -186,6 +230,19 @@ pub fn run_train(args: TrainArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(ri) = args.rezero_init {
         config.agent.actor.rezero_init = ri;
+    }
+
+    if args.actor_hysteresis {
+        config.agent.actor_hysteresis = true;
+    }
+    if args.critic_hysteresis {
+        config.agent.critic_hysteresis = true;
+    }
+    if let Some(ewc) = args.ewc_lambda {
+        config.agent.ewc_lambda = ewc;
+    }
+    if let Some(sf) = args.scale_floor {
+        config.agent.scale_floor = sf;
     }
 
     config.validate()?;
@@ -343,6 +400,9 @@ pub fn run_evaluate(args: EvaluateArgs) -> Result<(), Box<dyn std::error::Error>
         PcActorCritic::new(CpuLinAlg::new(), agent_config, 42)?
     };
 
+    if args.games == 0 {
+        return Err("--games must be > 0".into());
+    }
     let mut minimax = MinimaxPlayer::new(args.depth);
     let mut wins = 0usize;
     let mut draws = 0usize;
@@ -464,6 +524,44 @@ adaptive_surprise = true
 surprise_buffer_size = 400
 entropy_coeff = 0.0
 
+# TD(n): n-step returns (0 = standard TD(0), n > 0 = accumulate n steps)
+td_steps = 0
+
+# Continuous Learning (all disabled by default for backward compatibility)
+# M1 — Scale range: controls surprise-driven learning rate scaling
+scale_floor = 0.0              # 0.0 = true weight freeze when surprise is low
+scale_ceil = 2.0               # Max learning rate multiplier when surprise is high
+
+# M2 — Hysteresis: dual-EWMA FROZEN/PLASTIC state machines
+actor_hysteresis = false
+actor_fast_window = 20
+actor_slow_window = 100
+actor_wake_fraction = 0.5
+actor_sleep_fraction = 0.3
+critic_hysteresis = false
+critic_fast_window = 20
+critic_slow_window = 100
+critic_wake_fraction = 0.5
+critic_sleep_fraction = 0.3
+actor_wakes_critic = true
+actor_wakes_critic_threshold = 1000
+critic_wakes_actor = true
+critic_wakes_actor_threshold = 1000
+
+# M3 — Consolidation decay: per-layer learning rate modulation
+consolidation_decay = 1.0      # 1.0 = no decay (all layers equal)
+critic_consolidation_decay = 1.0
+adaptive_consolidation = false
+consolidation_ema_beta = 0.99
+consolidation_sigmoid_k = 10.0
+consolidation_error_threshold = 0.05
+
+# M4 — EWC: Elastic Weight Consolidation
+ewc_lambda = 0.0               # 0.0 = disabled (zero overhead)
+fisher_decay = 0.9
+fisher_ema_beta = 0.99
+logits_reversal = false
+
 [agent.actor]
 input_size = 9
 output_size = 9
@@ -506,7 +604,7 @@ window_size = 1000
 
 [continuous]
 max_episodes = 50000
-surprise_threshold = 0.1
+random_side = false            # true = random, false = alternating (even=P1, odd=P2)
 
 [logger]
 level = "info"
@@ -534,12 +632,17 @@ pub fn run_seed_test(args: SeedTestArgs) -> Result<(), Box<dyn std::error::Error
         b: stdout.lock(),
     };
 
-    let results = experiment::run_seed_test(&config, args.n, &mut writer)?;
+    let results = if args.continuous {
+        experiment::run_seed_test_continuous(&config, args.n, &mut writer)?
+    } else {
+        experiment::run_seed_test(&config, args.n, &mut writer)?
+    };
 
     let summary = format!(
-        "\n=== SEED TEST ({} runs, lambda={:.8}) ===\n{:<24} {:<10} {:<10} {:<10} {:<10}\n{}\n",
+        "\n=== SEED TEST ({} runs, lambda={:.8}) ===\n{:<6} {:<24} {:<10} {:<10} {:<10} {:<10}\n{}\n",
         results.len(),
         results.first().map(|r| r.lambda).unwrap_or(0.0),
+        "run",
         "seed",
         "max_depth",
         "win%",
@@ -548,7 +651,8 @@ pub fn run_seed_test(args: SeedTestArgs) -> Result<(), Box<dyn std::error::Error
         results
             .iter()
             .map(|r| format!(
-                "{:<24} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                "{:<6} {:<24} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                r.run_number,
                 r.seed,
                 r.max_depth,
                 r.win_rate * 100.0,
@@ -622,9 +726,10 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
     // Summary table
     let sweep_col = sweep.name();
     let summary = format!(
-        "\n=== SUMMARY ({} runs, sweep={}) ===\n{:<8} {:<8} {:<10} {:<10} {:<10} {:<10}\n{}\n",
+        "\n=== SUMMARY ({} runs, sweep={}) ===\n{:<6} {:<8} {:<8} {:<10} {:<10} {:<10} {:<10}\n{}\n",
         results.len(),
         sweep_col,
+        "run",
         "seed",
         "lambda",
         "max_depth",
@@ -634,7 +739,8 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
         results
             .iter()
             .map(|r| format!(
-                "{:<8} {:<8.2} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                "{:<6} {:<8} {:<8.2} {:<10} {:<10.1} {:<10.1} {:<10.1}",
+                r.run_number,
                 r.seed,
                 r.lambda,
                 r.max_depth,
@@ -650,6 +756,111 @@ pub fn run_experiment(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Er
     writer.flush()?;
 
     println!("\nResults saved to experiment.txt");
+    Ok(())
+}
+
+/// Runs the find-champion subcommand.
+///
+/// Loads config, runs N independent training sessions, and reports the
+/// best champion found (highest fitness score).
+///
+/// # Arguments
+///
+/// * `args` - Find-champion arguments from CLI.
+///
+/// # Errors
+///
+/// Returns an error if config loading, training, or I/O fails.
+pub fn run_find_champion(args: FindChampionArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::training::champion::ChampionFinder;
+
+    let mut config = AppConfig::load(Path::new(&args.config))?;
+
+    if let Some(n) = args.iterations {
+        config.champion.n_iterations = n;
+    }
+
+    config.validate()?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = stop_flag.clone();
+    let _ = ctrlc::set_handler(move || {
+        flag.store(true, Ordering::SeqCst);
+    });
+
+    let mut finder = ChampionFinder::new(config, stop_flag);
+    let result = finder.find()?;
+
+    println!();
+    println!("=== Champion Found ===");
+    if result.champion_iteration == 0 {
+        println!("No champion found (no iterations completed).");
+    } else {
+        println!("Fitness:   {:.4}", result.champion_fitness);
+        println!("Depth:     {}", result.champion_depth);
+        println!(
+            "Iteration: {}/{}",
+            result.champion_iteration,
+            result.iterations.len()
+        );
+        println!("Seed:      {}", result.champion_seed);
+    }
+    println!("Iterations run: {}", result.iterations.len());
+
+    Ok(())
+}
+
+/// Runs the stress-test subcommand.
+///
+/// Loads a champion model and subjects it to continuous training against
+/// random-depth opponents, reporting fitness drift statistics.
+///
+/// # Arguments
+///
+/// * `args` - Stress-test arguments from CLI.
+///
+/// # Errors
+///
+/// Returns an error if config loading, champion loading, training, or I/O fails.
+pub fn run_stress_test(args: StressTestArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::training::stress_test::StressTester;
+
+    let mut config = AppConfig::load(Path::new(&args.config))?;
+
+    if let Some(path) = args.champion {
+        config.stress_test.champion_path = path;
+    }
+    if let Some(m) = args.max_episodes {
+        config.stress_test.max_episodes = m;
+    }
+
+    config.validate()?;
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let flag = stop_flag.clone();
+    let _ = ctrlc::set_handler(move || {
+        flag.store(true, Ordering::SeqCst);
+    });
+
+    let stress_cfg = config.stress_test.clone();
+    let mut tester = StressTester::new(config, stress_cfg, stop_flag)?;
+    let result = tester.run()?;
+
+    println!();
+    println!("=== Stress Test Summary ===");
+    println!("Episodes run:     {}", result.total_episodes);
+    println!("Baseline fitness: {:.4}", result.baseline_fitness);
+    println!(
+        "Final fitness:    {:.4} ({:+.4})",
+        result.final_fitness,
+        result.final_fitness - result.baseline_fitness
+    );
+    println!("Max fitness:      {:.4}", result.max_fitness);
+    println!("Min fitness:      {:.4}", result.min_fitness);
+    println!("Improvements:     {}", result.improvements);
+    println!("Stable:           {}", result.stable);
+    println!("Degradations:     {}", result.degradations);
+
     Ok(())
 }
 
@@ -678,6 +889,28 @@ mod tests {
     }
 
     #[test]
+    fn test_find_champion_subcommand_parses() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let subs: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
+        assert!(
+            subs.contains(&"find-champion"),
+            "Expected find-champion subcommand, got: {subs:?}"
+        );
+    }
+
+    #[test]
+    fn test_stress_test_subcommand_parses() {
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let subs: Vec<&str> = cmd.get_subcommands().map(|s| s.get_name()).collect();
+        assert!(
+            subs.contains(&"stress-test"),
+            "Expected stress-test subcommand, got: {subs:?}"
+        );
+    }
+
+    #[test]
     fn test_default_config_toml_is_valid() {
         let config: crate::utils::config::AppConfig = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         assert!(config.validate().is_ok());
@@ -697,5 +930,16 @@ mod tests {
         assert_eq!(config.agent.actor.hidden_layers.len(), 1);
         assert_eq!(config.agent.actor.hidden_layers[0].size, 27);
         assert_eq!(config.agent.critic.input_size, 36);
+    }
+
+    #[test]
+    fn test_default_config_toml_has_cl_fields() {
+        let config: crate::utils::config::AppConfig = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert!((config.agent.scale_floor - 0.0).abs() < 1e-12);
+        assert!((config.agent.scale_ceil - 2.0).abs() < 1e-12);
+        assert!(!config.agent.actor_hysteresis);
+        assert!(!config.agent.critic_hysteresis);
+        assert!((config.agent.ewc_lambda - 0.0).abs() < 1e-12);
+        assert!((config.agent.consolidation_decay - 1.0).abs() < 1e-12);
     }
 }
