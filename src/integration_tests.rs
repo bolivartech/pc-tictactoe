@@ -32,7 +32,7 @@ mod tests {
         while !env.is_terminal() {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Play).unwrap();
             env.step(action).unwrap();
         }
 
@@ -77,7 +77,7 @@ mod tests {
         while !env.is_terminal() {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = agent.act(&state, &valid, SelectionMode::Training);
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Training).unwrap();
             env.step(action).unwrap();
         }
 
@@ -106,7 +106,9 @@ mod tests {
         while !env2.is_terminal() {
             let state = env2.board_as_f64(env2.current_player());
             let valid = env2.valid_actions();
-            let (action, _) = loaded_agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = loaded_agent
+                .act(&state, &valid, SelectionMode::Play)
+                .unwrap();
             env2.step(action).unwrap();
         }
         assert!(env2.is_terminal());
@@ -159,7 +161,7 @@ mod tests {
         while !env.is_terminal() {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Play).unwrap();
             env.step(action).unwrap();
         }
         assert!(env.is_terminal());
@@ -186,7 +188,7 @@ mod tests {
         while !env.is_terminal() {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = agent.act(&state, &valid, SelectionMode::Play).unwrap();
             env.step(action).unwrap();
         }
         assert!(env.is_terminal());
@@ -216,7 +218,9 @@ mod tests {
         while !env.is_terminal() {
             let state = env.board_as_f64(env.current_player());
             let valid = env.valid_actions();
-            let (action, _) = loaded_agent.act(&state, &valid, SelectionMode::Play);
+            let (action, _) = loaded_agent
+                .act(&state, &valid, SelectionMode::Play)
+                .unwrap();
             env.step(action).unwrap();
         }
         assert!(env.is_terminal());

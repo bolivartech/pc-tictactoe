@@ -146,7 +146,10 @@ impl Trainer {
             if self.env.current_player() == agent_side {
                 let state = self.env.board_as_f64(agent_side);
                 let valid = self.env.valid_actions();
-                let (action, infer) = self.agent.act(&state, &valid, SelectionMode::Training);
+                let (action, infer) = self
+                    .agent
+                    .act(&state, &valid, SelectionMode::Training)
+                    .expect("act() failed in Discrete Training mode (TTT is always Discrete)");
 
                 trajectory.push(TrajectoryStep {
                     input: state.to_vec(),

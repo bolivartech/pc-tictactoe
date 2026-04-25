@@ -117,7 +117,9 @@ pub fn score_vs_minimax(
             if env.current_player() == agent_side {
                 let state = env.board_as_f64(agent_side);
                 let valid = env.valid_actions();
-                let (action, _) = agent.act(&state, &valid, SelectionMode::Play);
+                let (action, _) = agent
+                    .act(&state, &valid, SelectionMode::Play)
+                    .expect("act() failed in Discrete Play mode (TTT is always Discrete)");
                 env.step(action).expect("agent picked valid action");
             } else {
                 let action = minimax.choose_action(&env);
