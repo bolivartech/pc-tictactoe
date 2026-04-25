@@ -222,6 +222,25 @@ pub struct AgentSection {
     /// Batch size for each `replay_learn()` call. Default: 64.
     #[serde(default = "default_replay_batch_size")]
     pub replay_batch_size: usize,
+    /// Replay-path actor learning-rate floor under FROZEN actor hysteresis
+    /// (pc-rl-core v2.2.1+). Default `-1.0` (sentinel) preserves v2.2.0
+    /// behavior: replay updates respect `scale_floor` clamp when actor is
+    /// FROZEN. Strict positive (`> 0.0`) opts the replay path into actor
+    /// learning during FROZEN — also bypasses the `skip_kl` gate so Polyak
+    /// and Frozen KL anchors contribute to replay updates. Recommended
+    /// pairing with `critic_floor_replay` (see field below). Validated to
+    /// `[0.0, 10*scale_ceil]` finite or sentinel.
+    #[serde(default = "default_replay_floor_sentinel")]
+    pub scale_floor_replay: f64,
+    /// Replay-path critic learning-rate floor under FROZEN critic hysteresis
+    /// (pc-rl-core v3.0.0+). Default `-1.0` (sentinel) honors the v3.0.0
+    /// FROZEN-critic gate (no critic update under FROZEN-replay). Strict
+    /// positive (`> 0.0`) opts the critic into replay-driven learning even
+    /// during FROZEN. Recommended to set in lockstep with
+    /// `scale_floor_replay` to preserve actor-critic symmetry. Validated to
+    /// `[0.0, 10*scale_ceil]` finite or sentinel.
+    #[serde(default = "default_replay_floor_sentinel")]
+    pub critic_floor_replay: f64,
 }
 
 /// Actor network configuration section.
@@ -682,6 +701,12 @@ fn default_replay_positive_only() -> bool {
 fn default_replay_batch_size() -> usize {
     64
 }
+/// Sentinel default for `scale_floor_replay` and `critic_floor_replay`
+/// (pc-rl-core v2.2.1+ / v3.0.0+). Negative value flags "no opt-in" and
+/// preserves the FROZEN-clamp behavior of the corresponding online path.
+fn default_replay_floor_sentinel() -> f64 {
+    -1.0
+}
 fn default_stress_champion_path() -> String {
     "champion.json".to_string()
 }
@@ -768,6 +793,8 @@ impl Default for AgentSection {
             replay_recent_capacity: 0,
             replay_positive_only: default_replay_positive_only(),
             replay_batch_size: default_replay_batch_size(),
+            scale_floor_replay: default_replay_floor_sentinel(),
+            critic_floor_replay: default_replay_floor_sentinel(),
         }
     }
 }
@@ -1135,6 +1162,42 @@ impl AppConfig {
             });
         }
 
+        // pc-rl-core v2.2.1+ / v3.0.0 replay floor opt-in fields. Validate per
+        // upstream contract: finite, and either the sentinel (~-1.0) or
+        // within `[0.0, 10*scale_ceil]`. The core re-validates at construction
+        // but failing fast here surfaces TOML typos before agent allocation.
+        Self::validate_replay_floor("scale_floor_replay", a.scale_floor_replay, a.scale_ceil)?;
+        Self::validate_replay_floor("critic_floor_replay", a.critic_floor_replay, a.scale_ceil)?;
+
+        Ok(())
+    }
+
+    /// Validates a replay-floor opt-in field. Mirrors the upstream
+    /// `pc_rl_core::pc_actor_critic::config::validate_replay_floor` contract.
+    fn validate_replay_floor(name: &str, value: f64, scale_ceil: f64) -> Result<(), ConfigError> {
+        if !value.is_finite() {
+            return Err(ConfigError {
+                message: format!("{name} ({value}) must be finite (or sentinel -1.0)"),
+            });
+        }
+        // Sentinel band: ~-1.0. Upstream uses `(value + 1.0).abs() < 1e-9` —
+        // we re-implement the same predicate locally to avoid leaking core
+        // internals into the TTT validation surface.
+        let is_sentinel = (value + 1.0).abs() < 1e-9;
+        if is_sentinel {
+            return Ok(());
+        }
+        if value < 0.0 {
+            return Err(ConfigError {
+                message: format!("{name} ({value}) must be >= 0.0 when not sentinel (-1.0)"),
+            });
+        }
+        let upper = 10.0 * scale_ceil;
+        if value > upper {
+            return Err(ConfigError {
+                message: format!("{name} ({value}) must be <= 10*scale_ceil ({upper})"),
+            });
+        }
         Ok(())
     }
 
@@ -1337,6 +1400,8 @@ impl AppConfig {
             replay_recent_capacity: self.agent.replay_recent_capacity,
             replay_positive_only: self.agent.replay_positive_only,
             replay_batch_size: self.agent.replay_batch_size,
+            scale_floor_replay: self.agent.scale_floor_replay,
+            critic_floor_replay: self.agent.critic_floor_replay,
         })
     }
 
