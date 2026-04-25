@@ -17,7 +17,7 @@ use pc_rl_core::activation::Activation;
 use pc_rl_core::layer::LayerDef;
 use pc_rl_core::mlp_critic::MlpCriticConfig;
 use pc_rl_core::pc_actor::PcActorConfig;
-use pc_rl_core::pc_actor_critic::{ActionSpace, PcActorCriticConfig};
+use pc_rl_core::pc_actor_critic::PcActorCriticConfig;
 use serde::Deserialize;
 
 /// Top-level application configuration parsed from TOML.
@@ -1402,11 +1402,6 @@ impl AppConfig {
             replay_batch_size: self.agent.replay_batch_size,
             scale_floor_replay: self.agent.scale_floor_replay,
             critic_floor_replay: self.agent.critic_floor_replay,
-            // pc-rl-core v4.0.0 prep fields. TicTacToe uses Discrete action
-            // space (logits over 9 cells). Continuous mode (Gaussian policy)
-            // is not exposed to TTT; defaults preserve v3.0.0 behavior.
-            action_space: ActionSpace::Discrete,
-            policy_sigma: 0.1,
         })
     }
 
